@@ -1,0 +1,9 @@
+{
+  "name": "AI Widget MVP",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-20-bookworm",
+  "postCreateCommand": "npm install",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Next.js app" }
+  }
+}

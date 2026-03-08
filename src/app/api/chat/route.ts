@@ -84,7 +84,6 @@ export async function POST(req: NextRequest) {
 
     if (hitLimit) {
       const fallback = fallbackMessage();
-
       await supabase.from("messages").insert({
         conversation_id: conversation.id,
         role: "assistant",
@@ -92,7 +91,6 @@ export async function POST(req: NextRequest) {
         token_count: 0,
         cost: 0
       });
-
       return NextResponse.json({ reply: fallback, suggestLead: true, limited: true });
     }
 
@@ -101,7 +99,7 @@ export async function POST(req: NextRequest) {
       .select("role,content")
       .eq("conversation_id", conversation.id)
       .order("created_at", { ascending: true })
-      .limit(12);
+      .limit(20);
 
     const openrouterMessages = [
       { role: "system", content: bot.system_prompt },
@@ -126,12 +124,16 @@ export async function POST(req: NextRequest) {
 
     if (!llmRes.ok) {
       const txt = await llmRes.text();
+      console.error("OpenRouter error:", txt);
       return NextResponse.json({ error: `OpenRouter error: ${txt}` }, { status: 502 });
     }
 
     const data: any = await llmRes.json();
+    console.log("OpenRouter response:", JSON.stringify(data));
+
     const reply =
       data.choices?.[0]?.message?.content?.trim() ||
+      data.choices?.[0]?.text?.trim() ||
       "Извините, не получилось сгенерировать ответ.";
 
     const promptTokens = data.usage?.prompt_tokens ?? 0;

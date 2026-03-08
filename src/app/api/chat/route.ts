@@ -1,146 +1,153 @@
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { estimateCost, fallbackMessage, isOriginAllowed, shouldSuggestLead } from "@/lib/chat";
-import { env } from "@/lib/env";
-import { getServiceSupabase } from "@/lib/supabase";
+"use client";
 
-const schema = z.object({
-  botId: z.string().min(2),
-  message: z.string().min(1).max(4000),
-  sessionId: z.string().min(8),
-  pageUrl: z.string().url().optional()
-});
+import { FormEvent, useMemo, useRef, useEffect, useState } from "react";
 
-export async function POST(req: NextRequest) {
-  try {
-    const payload = schema.parse(await req.json());
-    const supabase = getServiceSupabase();
+type Props = {
+  botId: string;
+  embedded?: boolean;
+};
 
-    const { data: bot, error: botError } = await supabase
-      .from("bots")
-      .select("*")
-      .eq("public_bot_id", payload.botId)
-      .single();
+type Message = { role: "user" | "assistant"; content: string };
 
-    if (botError || !bot) return NextResponse.json({ error: "Bot not found" }, { status: 404 });
-    if (!bot.is_active) return NextResponse.json({ error: "Bot inactive" }, { status: 403 });
+export function ChatWidget({ botId, embedded = false }: Props) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-    const origin = req.headers.get("origin");
-    const referer = req.headers.get("referer");
-    const appHost = new URL(env.NEXT_PUBLIC_APP_URL).hostname;
-    const fromOwnApp = [origin, referer].some((v) => (v ? new URL(v).hostname === appHost : false));
+  const sessionId = useMemo(() => {
+    if (typeof window === "undefined") return "server";
+    const key = `chat_session_${botId}`;
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+    return id;
+  }, [botId]);
 
-    if (!fromOwnApp && !isOriginAllowed(bot.allowed_domain, origin, referer)) {
-      return NextResponse.json({ error: "Origin not allowed" }, { status: 403 });
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  async function sendMessage(event: FormEvent) {
+    event.preventDefault();
+    if (!text.trim() || loading) return;
+
+    const userMessage = text.trim();
+    setText("");
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          botId,
+          message: userMessage,
+          sessionId,
+          pageUrl: typeof window === "undefined" ? "" : window.location.href
+        })
+      });
+
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Request failed");
+
+      setMessages((prev) => [...prev, { role: "assistant", content: payload.reply }]);
+    } catch (error) {
+      const fallback = error instanceof Error ? error.message : "Error";
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Ошибка: ${fallback}` }
+      ]);
+    } finally {
+      setLoading(false);
     }
-
-    const monthStart = new Date();
-    monthStart.setUTCDate(1);
-    monthStart.setUTCHours(0, 0, 0, 0);
-
-    const { data: usageRows } = await supabase
-      .from("usage_daily")
-      .select("total_tokens, total_cost")
-      .eq("bot_id", bot.id)
-      .gte("usage_date", monthStart.toISOString().slice(0, 10));
-
-    const usedTokens = usageRows?.reduce((sum, row) => sum + row.total_tokens, 0) ?? 0;
-    const usedCost = usageRows?.reduce((sum, row) => sum + Number(row.total_cost), 0) ?? 0;
-
-    const hitLimit = usedTokens >= bot.monthly_token_limit || usedCost >= Number(bot.monthly_cost_limit);
-
-    const { data: conversation } = await supabase
-      .from("conversations")
-      .upsert(
-        {
-          bot_id: bot.id,
-          session_id: payload.sessionId,
-          source_page: payload.pageUrl || null,
-          last_message_at: new Date().toISOString()
-        },
-        { onConflict: "bot_id,session_id" }
-      )
-      .select("id")
-      .single();
-
-    if (!conversation) return NextResponse.json({ error: "Conversation error" }, { status: 500 });
-
-    await supabase.from("messages").insert({
-      conversation_id: conversation.id,
-      role: "user",
-      content: payload.message,
-      token_count: 0,
-      cost: 0
-    });
-
-    if (hitLimit) {
-      const fallback = fallbackMessage();
-      await supabase.from("messages").insert({ conversation_id: conversation.id, role: "assistant", content: fallback, token_count: 0, cost: 0 });
-      return NextResponse.json({ reply: fallback, suggestLead: true, limited: true });
-    }
-
-    const { data: history } = await supabase
-      .from("messages")
-      .select("role,content")
-      .eq("conversation_id", conversation.id)
-      .order("created_at", { ascending: true })
-      .limit(12);
-
-    const openrouterMessages = [
-      { role: "system", content: bot.system_prompt },
-      ...(history || []).map((m) => ({ role: m.role, content: m.content }))
-    ];
-
-    const llmRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
-        "X-Title": "AI Widget MVP"
-      },
-      body: JSON.stringify({
-        model: bot.model,
-        temperature: bot.temperature,
-        max_tokens: bot.max_completion_tokens,
-        messages: openrouterMessages
-      })
-    });
-
-    if (!llmRes.ok) {
-      const txt = await llmRes.text();
-      return NextResponse.json({ error: `OpenRouter error: ${txt}` }, { status: 502 });
-    }
-
-    const data = await llmRes.json();
-    const reply = data.choices?.[0]?.message?.content?.trim() || "Извините, не получилось сгенерировать ответ.";
-    const promptTokens = data.usage?.prompt_tokens ?? 0;
-    const completionTokens = data.usage?.completion_tokens ?? 0;
-    const totalTokens = data.usage?.total_tokens ?? promptTokens + completionTokens;
-    const cost = estimateCost(totalTokens, bot.model);
-
-    await supabase.from("messages").insert({
-      conversation_id: conversation.id,
-      role: "assistant",
-      content: reply,
-      token_count: totalTokens,
-      cost
-    });
-
-    const today = new Date().toISOString().slice(0, 10);
-    await supabase.rpc("upsert_usage_daily", {
-      p_bot_id: bot.id,
-      p_usage_date: today,
-      p_prompt_tokens: promptTokens,
-      p_completion_tokens: completionTokens,
-      p_total_tokens: totalTokens,
-      p_total_cost: cost
-    });
-
-    const suggestLead = shouldSuggestLead(payload.message) || shouldSuggestLead(reply);
-    return NextResponse.json({ reply, suggestLead, limited: false });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error";
-    return NextResponse.json({ error: message }, { status: 400 });
   }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(e as unknown as FormEvent);
+    }
+  }
+
+  return (
+    <div
+      className={`flex h-full flex-col bg-white ${
+        embedded ? "" : "rounded-xl border border-slate-200 shadow-sm"
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
+        <div className="h-2 w-2 rounded-full bg-emerald-400" />
+        <span className="text-sm font-semibold text-slate-700">AI Assistant</span>
+        <span className="ml-auto text-xs text-slate-400">Online</span>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 text-sm">
+        {messages.length === 0 && (
+          <p className="text-slate-400 text-center mt-8">
+            Привет! Чем могу помочь?
+          </p>
+        )}
+        {messages.map((msg, i) => (
+          <div
+            key={i}
+            className={
+              msg.role === "assistant"
+                ? "flex justify-start"
+                : "flex justify-end"
+            }
+          >
+            <div
+              className={
+                msg.role === "assistant"
+                  ? "max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800"
+                  : "max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white"
+              }
+            >
+              {msg.content}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex justify-start">
+            <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-400">
+              <span className="inline-flex gap-1">
+                <span className="animate-bounce">.</span>
+                <span className="animate-bounce [animation-delay:0.1s]">.</span>
+                <span className="animate-bounce [animation-delay:0.2s]">.</span>
+              </span>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <form
+        onSubmit={sendMessage}
+        className="flex items-center gap-2 border-t border-slate-100 px-3 py-3"
+      >
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Напишите сообщение..."
+          className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm outline-none focus:border-blue-400 focus:bg-white transition"
+          disabled={loading}
+        />
+        <button
+          disabled={loading || !text.trim()}
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-40 transition"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+            <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+          </svg>
+        </button>
+      </form>
+    </div>
+  );
 }

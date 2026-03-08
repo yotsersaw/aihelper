@@ -18,10 +18,10 @@ export function ChatWidget({ botId, embedded = false }: Props) {
   const sessionId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     const key = `chat_session_${botId}`;
-    const existing = sessionStorage.getItem(key);
+    const existing = localStorage.getItem(key);
     if (existing) return existing;
     const id = crypto.randomUUID();
-    sessionStorage.setItem(key, id);
+    localStorage.setItem(key, id);
     return id;
   }, [botId]);
 

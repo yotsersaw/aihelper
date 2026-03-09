@@ -9,13 +9,16 @@ async function createBot(formData: FormData) {
     company_name: String(formData.get("company_name") || "").trim(),
     niche: String(formData.get("niche") || "").trim() || null,
     system_prompt: String(formData.get("system_prompt") || "").trim(),
-    model: String(formData.get("model") || "openai/gpt-4o-mini"),
+    model: String(formData.get("model") || "minimax/minimax-m2.5"),
+    analysis_model: String(formData.get("analysis_model") || "openai/gpt-4o-mini"),
     temperature: Number(formData.get("temperature") || 0.3),
-    max_completion_tokens: Number(formData.get("max_completion_tokens") || 350),
+    max_completion_tokens: Number(formData.get("max_completion_tokens") || 1000),
     allowed_domain: String(formData.get("allowed_domain") || "*"),
     handoff_email: String(formData.get("handoff_email") || "").trim() || null,
     monthly_token_limit: Number(formData.get("monthly_token_limit") || 200000),
     monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
+    welcome_message: String(formData.get("welcome_message") || "Привет! Чем могу помочь?").trim(),
+    error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
     is_active: formData.get("is_active") === "on"
   });
   revalidatePath("/admin");
@@ -31,13 +34,16 @@ async function updateBot(formData: FormData) {
       company_name: String(formData.get("company_name") || "").trim(),
       niche: String(formData.get("niche") || "").trim() || null,
       system_prompt: String(formData.get("system_prompt") || "").trim(),
-      model: String(formData.get("model") || "openai/gpt-4o-mini"),
+      model: String(formData.get("model") || "minimax/minimax-m2.5"),
+      analysis_model: String(formData.get("analysis_model") || "openai/gpt-4o-mini"),
       temperature: Number(formData.get("temperature") || 0.3),
-      max_completion_tokens: Number(formData.get("max_completion_tokens") || 350),
+      max_completion_tokens: Number(formData.get("max_completion_tokens") || 1000),
       allowed_domain: String(formData.get("allowed_domain") || "*"),
       handoff_email: String(formData.get("handoff_email") || "").trim() || null,
       monthly_token_limit: Number(formData.get("monthly_token_limit") || 200000),
       monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
+      welcome_message: String(formData.get("welcome_message") || "Привет! Чем могу помочь?").trim(),
+      error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
       is_active: formData.get("is_active") === "on",
       updated_at: new Date().toISOString()
     })
@@ -79,12 +85,27 @@ export default async function AdminPage() {
           <input required name="company_name" placeholder="Company name" className="rounded-md border p-2" />
           <input name="niche" placeholder="Niche (e.g. dental)" className="rounded-md border p-2" />
           <input name="allowed_domain" placeholder="Allowed domain (* = any)" defaultValue="*" className="rounded-md border p-2" />
-          <input name="model" defaultValue="openai/gpt-4o-mini" className="rounded-md border p-2" />
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Chat model</label>
+            <input name="model" defaultValue="minimax/minimax-m2.5" className="rounded-md border p-2 w-full" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Analysis model</label>
+            <input name="analysis_model" defaultValue="openai/gpt-4o-mini" className="rounded-md border p-2 w-full" />
+          </div>
           <input name="handoff_email" placeholder="Handoff email" className="rounded-md border p-2" />
           <input name="temperature" type="number" step="0.1" min="0" max="1" defaultValue="0.3" placeholder="Temperature" className="rounded-md border p-2" />
-          <input name="max_completion_tokens" type="number" defaultValue="350" placeholder="Max tokens" className="rounded-md border p-2" />
+          <input name="max_completion_tokens" type="number" defaultValue="1000" placeholder="Max tokens" className="rounded-md border p-2" />
           <input name="monthly_token_limit" type="number" defaultValue="200000" placeholder="Monthly token limit" className="rounded-md border p-2" />
           <input name="monthly_cost_limit" type="number" step="0.01" defaultValue="50" placeholder="Monthly cost limit $" className="rounded-md border p-2" />
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Welcome message</label>
+            <input name="welcome_message" defaultValue="Привет! Чем могу помочь?" className="rounded-md border p-2 w-full" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Error message</label>
+            <input name="error_message" defaultValue="Извините, произошла ошибка. Попробуйте ещё раз." className="rounded-md border p-2 w-full" />
+          </div>
           <label className="inline-flex items-center gap-2 p-2 text-sm">
             <input name="is_active" type="checkbox" defaultChecked /> Active
           </label>
@@ -127,8 +148,12 @@ export default async function AdminPage() {
                   <input name="allowed_domain" defaultValue={bot.allowed_domain} className="w-full rounded-md border p-2" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Model</label>
+                  <label className="mb-1 block text-xs text-slate-500">Chat model</label>
                   <input name="model" defaultValue={bot.model} className="w-full rounded-md border p-2" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Analysis model</label>
+                  <input name="analysis_model" defaultValue={bot.analysis_model ?? "openai/gpt-4o-mini"} className="w-full rounded-md border p-2" />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-slate-500">Handoff email</label>
@@ -150,6 +175,14 @@ export default async function AdminPage() {
                   <label className="mb-1 block text-xs text-slate-500">Monthly cost limit $</label>
                   <input name="monthly_cost_limit" type="number" step="0.01" defaultValue={bot.monthly_cost_limit} className="w-full rounded-md border p-2" />
                 </div>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Welcome message</label>
+                  <input name="welcome_message" defaultValue={bot.welcome_message ?? "Привет! Чем могу помочь?"} className="w-full rounded-md border p-2" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Error message</label>
+                  <input name="error_message" defaultValue={bot.error_message ?? "Извините, произошла ошибка. Попробуйте ещё раз."} className="w-full rounded-md border p-2" />
+                </div>
               </div>
               <div>
                 <label className="mb-1 block text-xs text-slate-500">System prompt</label>
@@ -164,7 +197,7 @@ export default async function AdminPage() {
                 <label className="inline-flex items-center gap-2 text-sm">
                   <input name="is_active" type="checkbox" defaultChecked={bot.is_active} /> Active
                 </label>
-                <div className="text-xs text-slate-400">
+                <div className="text-xs text-slate-400 hidden md:block">
                   Embed: <code className="bg-slate-100 px-1 rounded">&lt;script src=&quot;https://aihelper-mauve.vercel.app/widget.js&quot; data-bot-id=&quot;{bot.public_bot_id}&quot;&gt;&lt;/script&gt;</code>
                 </div>
                 <button className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white">Save</button>
@@ -220,4 +253,3 @@ export default async function AdminPage() {
     </main>
   );
 }
-

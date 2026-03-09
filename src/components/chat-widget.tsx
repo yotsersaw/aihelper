@@ -5,15 +5,23 @@ import { FormEvent, useMemo, useRef, useEffect, useState } from "react";
 type Props = {
   botId: string;
   embedded?: boolean;
+  welcomeMessage?: string;
+  errorMessage?: string;
 };
 
 type Message = { role: "user" | "assistant"; content: string };
 
-export function ChatWidget({ botId, embedded = false }: Props) {
+export function ChatWidget({
+  botId,
+  embedded = false,
+  welcomeMessage = "Привет! Чем могу помочь?",
+  errorMessage = "Извините, произошла ошибка. Попробуйте ещё раз."
+}: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const sessionId = useMemo(() => {
     if (typeof window === "undefined") return "server";
@@ -28,6 +36,13 @@ export function ChatWidget({ botId, embedded = false }: Props) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  // Auto-focus input after bot replies
+  useEffect(() => {
+    if (!loading) {
+      inputRef.current?.focus();
+    }
+  }, [loading]);
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
@@ -54,11 +69,10 @@ export function ChatWidget({ botId, embedded = false }: Props) {
       if (!response.ok) throw new Error(payload.error || "Request failed");
 
       setMessages((prev) => [...prev, { role: "assistant", content: payload.reply }]);
-    } catch (error) {
-      const fallback = error instanceof Error ? error.message : "Error";
+    } catch {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Ошибка: ${fallback}` }
+        { role: "assistant", content: errorMessage }
       ]);
     } finally {
       setLoading(false);
@@ -89,7 +103,7 @@ export function ChatWidget({ botId, embedded = false }: Props) {
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 text-sm">
         {messages.length === 0 && (
           <p className="text-slate-400 text-center mt-8">
-            Привет! Чем могу помочь?
+            {welcomeMessage}
           </p>
         )}
         {messages.map((msg, i) => (
@@ -132,12 +146,14 @@ export function ChatWidget({ botId, embedded = false }: Props) {
         className="flex items-center gap-2 border-t border-slate-100 px-3 py-3"
       >
         <input
+          ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Напишите сообщение..."
           className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm outline-none focus:border-blue-400 focus:bg-white transition"
           disabled={loading}
+          autoFocus
         />
         <button
           disabled={loading || !text.trim()}

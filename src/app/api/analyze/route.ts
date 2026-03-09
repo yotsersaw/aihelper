@@ -2,33 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase";
 import { env } from "@/lib/env";
 
-type BotRelation =
-  | {
-      company_name: string;
-      handoff_email: string | null;
-      system_prompt?: string | null;
-    }
-  | {
-      company_name: string;
-      handoff_email: string | null;
-      system_prompt?: string | null;
-    }[]
-  | null;
-
-type AnalyzeConversation = {
-  id: string;
-  session_id: string;
-  bot_id: string;
-  bots: BotRelation;
-};
+const DEFAULT_ANALYSIS_PROMPT = 'Извлеки из разговора: имя клиента, телефон, email (если есть), суть обращения. Верни JSON: {"name":"...","phone":"...","email":"...","note":"...","has_contact":true/false}. Если контактных данных нет — has_contact: false.';
 
 async function sendLeadEmail(
   to: string,
   companyName: string,
-  lead: { name?: string; phone?: string; email?: string; summary?: string }
+  lead: { name?: string; phone?: string; email?: string; note?: string }
 ) {
   if (!process.env.RESEND_API_KEY) return;
-
   await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -45,7 +26,7 @@ async function sendLeadEmail(
         ${lead.name ? `<p><b>Имя:</b> ${lead.name}</p>` : ""}
         ${lead.phone ? `<p><b>Телефон:</b> ${lead.phone}</p>` : ""}
         ${lead.email ? `<p><b>Email:</b> ${lead.email}</p>` : ""}
-        ${lead.summary ? `<p><b>Суть запроса:</b> ${lead.summary}</p>` : ""}
+        ${lead.note ? `<p><b>Суть запроса:</b> ${lead.note}</p>` : ""}
       `
     })
   });
@@ -53,7 +34,6 @@ async function sendLeadEmail(
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-cron-secret");
-
   if (secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -61,19 +41,18 @@ export async function POST(req: NextRequest) {
   const supabase = getServiceSupabase();
   const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
-  const { data: conversationsRaw, error: conversationsError } = await supabase
+  const { data: conversationsRaw, error } = await supabase
     .from("conversations")
-    .select("id, session_id, bot_id, bots(company_name, handoff_email, system_prompt)")
+    .select("id, session_id, bot_id, bots(company_name, handoff_email, analysis_model, analysis_prompt, enable_analysis)")
     .eq("analyzed", false)
     .lt("last_message_at", cutoff)
     .limit(10);
 
-  if (conversationsError) {
-    return NextResponse.json({ error: conversationsError.message }, { status: 500 });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const conversations = (conversationsRaw ?? []) as AnalyzeConversation[];
-
+  const conversations = conversationsRaw ?? [];
   if (conversations.length === 0) {
     return NextResponse.json({ processed: 0 });
   }
@@ -81,24 +60,31 @@ export async function POST(req: NextRequest) {
   let processed = 0;
 
   for (const conv of conversations) {
+    // Mark as analyzed immediately to avoid reprocessing
     await supabase
       .from("conversations")
       .update({ analyzed: true, analyzed_at: new Date().toISOString() })
       .eq("id", conv.id);
 
-    const { data: messages, error: messagesError } = await supabase
+    const bot = Array.isArray(conv.bots) ? conv.bots[0] ?? null : conv.bots as any;
+
+    // Skip if analysis disabled for this bot
+    if (!bot || bot.enable_analysis === false) continue;
+
+    const { data: messages } = await supabase
       .from("messages")
       .select("role, content")
       .eq("conversation_id", conv.id)
       .order("created_at", { ascending: true });
 
-    if (messagesError || !messages || messages.length < 2) {
-      continue;
-    }
+    if (!messages || messages.length < 2) continue;
 
     const dialog = messages
       .map((m) => `${m.role === "user" ? "Клиент" : "Бот"}: ${m.content}`)
       .join("\n");
+
+    const analysisModel = bot.analysis_model || "openai/gpt-4o-mini";
+    const analysisPrompt = bot.analysis_prompt || DEFAULT_ANALYSIS_PROMPT;
 
     const llmRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -106,17 +92,16 @@ export async function POST(req: NextRequest) {
         Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
         "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
-        "X-Title": "AI Widget MVP"
+        "X-Title": "AI Widget"
       },
       body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
+        model: analysisModel,
         temperature: 0,
-        max_tokens: 300,
+        max_tokens: 400,
         messages: [
           {
             role: "system",
-            content:
-              'Ты анализируешь диалог между ботом и клиентом. Извлеки контактные данные если они есть. Отвечай ТОЛЬКО валидным JSON без markdown, без пояснений. Формат: {"name":"...", "phone":"...", "email":"...", "summary":"...", "has_contact":true/false}. Если данных нет — верни has_contact: false и пустые строки.'
+            content: `${analysisPrompt}\n\nОтвечай ТОЛЬКО валидным JSON без markdown и пояснений.`
           },
           {
             role: "user",
@@ -126,32 +111,20 @@ export async function POST(req: NextRequest) {
       })
     });
 
-    if (!llmRes.ok) {
-      continue;
-    }
+    if (!llmRes.ok) continue;
 
     const llmData: any = await llmRes.json();
     const raw = llmData.choices?.[0]?.message?.content?.trim() || "";
 
-    let parsed: {
-      name?: string;
-      phone?: string;
-      email?: string;
-      summary?: string;
-      has_contact?: boolean;
-    };
-
+    let parsed: any;
     try {
-      parsed = JSON.parse(raw);
+      const clean = raw.replace(/```json|```/g, "").trim();
+      parsed = JSON.parse(clean);
     } catch {
       continue;
     }
 
-    if (!parsed.has_contact) {
-      continue;
-    }
-
-    const bot = Array.isArray(conv.bots) ? conv.bots[0] ?? null : conv.bots;
+    if (!parsed.has_contact) continue;
 
     await supabase.from("leads").insert({
       bot_id: conv.bot_id,
@@ -159,15 +132,16 @@ export async function POST(req: NextRequest) {
       name: parsed.name || null,
       phone: parsed.phone || null,
       email: parsed.email || null,
-      note: parsed.summary || null
+      note: parsed.note || parsed.summary || null,
+      status: "new"
     });
 
-    if (bot?.handoff_email) {
+    if (bot.handoff_email) {
       await sendLeadEmail(bot.handoff_email, bot.company_name, {
         name: parsed.name,
         phone: parsed.phone,
         email: parsed.email,
-        summary: parsed.summary
+        note: parsed.note || parsed.summary
       });
     }
 

@@ -259,9 +259,10 @@ export default async function AdminPage() {
                       </details>
                       <form action={deleteBot}>
                         <input type="hidden" name="id" value={bot.id} />
+                        <input type="hidden" name="confirm_name" value={bot.company_name} />
                         <button
+                          formAction={deleteBot}
                           className="text-xs text-red-400 hover:text-red-600 px-2 py-1"
-                          onClick={(e) => { if (!confirm(`Удалить ${bot.company_name}?`)) e.preventDefault(); }}
                         >
                           Del
                         </button>

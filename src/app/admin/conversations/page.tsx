@@ -54,23 +54,15 @@ export default async function ConversationsPage({
       <div className="mx-auto max-w-6xl px-6 py-8 space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold">Разговоры <span className="text-slate-400 font-normal text-base">({count ?? 0})</span></h1>
-          <select
-            className="rounded-md border px-3 py-1.5 text-sm bg-white"
-            defaultValue={searchParams.bot || ""}
-            onChange={(e) => {
-              const url = new URL(window.location.href);
-              if (e.target.value) url.searchParams.set("bot", e.target.value);
-              else url.searchParams.delete("bot");
-              url.searchParams.delete("page");
-              url.searchParams.delete("id");
-              window.location.href = url.toString();
-            }}
-          >
-            <option value="">Все боты</option>
-            {bots?.map(b => (
-              <option key={b.id} value={b.public_bot_id}>{b.company_name}</option>
-            ))}
-          </select>
+          <form method="get" className="flex items-center gap-2">
+            <select name="bot" className="rounded-md border px-3 py-1.5 text-sm bg-white" defaultValue={searchParams.bot || ""}>
+              <option value="">Все боты</option>
+              {bots?.map(b => (
+                <option key={b.id} value={b.public_bot_id}>{b.company_name}</option>
+              ))}
+            </select>
+            <button type="submit" className="px-3 py-1.5 text-sm rounded-md bg-slate-100 hover:bg-slate-200">Фильтр</button>
+          </form>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

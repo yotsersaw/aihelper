@@ -65,24 +65,15 @@ export default async function LeadsPage({
       <div className="mx-auto max-w-5xl px-6 py-8 space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold">Лиды <span className="text-slate-400 font-normal text-base">({count ?? 0})</span></h1>
-          <div className="flex items-center gap-3">
-            <select
-              className="rounded-md border px-3 py-1.5 text-sm bg-white"
-              defaultValue={searchParams.bot || ""}
-              onChange={(e) => {
-                const url = new URL(window.location.href);
-                if (e.target.value) url.searchParams.set("bot", e.target.value);
-                else url.searchParams.delete("bot");
-                url.searchParams.delete("page");
-                window.location.href = url.toString();
-              }}
-            >
+          <form method="get" className="flex items-center gap-2">
+            <select name="bot" className="rounded-md border px-3 py-1.5 text-sm bg-white" defaultValue={searchParams.bot || ""}>
               <option value="">Все боты</option>
               {bots?.map(b => (
                 <option key={b.id} value={b.public_bot_id}>{b.company_name}</option>
               ))}
             </select>
-          </div>
+            <button type="submit" className="px-3 py-1.5 text-sm rounded-md bg-slate-100 hover:bg-slate-200">Фильтр</button>
+          </form>
         </div>
 
         <div className="bg-white rounded-xl border overflow-hidden">
@@ -107,19 +98,12 @@ export default async function LeadsPage({
                   <td className="px-4 py-3">
                     <form action={updateLeadStatus} className="inline">
                       <input type="hidden" name="id" value={lead.id} />
-                      <select
-                        name="status"
-                        defaultValue={lead.status || "new"}
-                        onChange={(e) => {
-                          const form = e.target.closest("form") as HTMLFormElement;
-                          form?.requestSubmit();
-                        }}
-                        className={`text-xs px-2 py-0.5 rounded-full border-0 cursor-pointer ${statusColors[lead.status || "new"]}`}
-                      >
+                      <select name="status" defaultValue={lead.status || "new"} className={`text-xs px-2 py-0.5 rounded-full border-0 cursor-pointer ${statusColors[lead.status || "new"]}`}>
                         {Object.entries(statusLabels).map(([val, label]) => (
                           <option key={val} value={val}>{label}</option>
                         ))}
                       </select>
+                      <button type="submit" className="text-xs text-slate-400 hover:text-slate-600 ml-1">✓</button>
                     </form>
                   </td>
                   <td className="px-4 py-3 font-medium">{lead.name || "—"}</td>

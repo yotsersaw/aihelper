@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { estimateCost, fallbackMessage, isOriginAllowed, shouldSuggestLead } from "@/lib/chat";
+import { estimateCost, fallbackMessage, isOriginAllowed } from "@/lib/chat";
 import { env } from "@/lib/env";
 import { getServiceSupabase } from "@/lib/supabase";
 
@@ -10,6 +10,9 @@ const schema = z.object({
   sessionId: z.string().min(8),
   pageUrl: z.string().url().optional()
 });
+
+// Keep only last N messages to prevent context overflow
+const HISTORY_WINDOW = 10;
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,12 +36,15 @@ export async function POST(req: NextRequest) {
     const origin = req.headers.get("origin");
     const referer = req.headers.get("referer");
     const appHost = new URL(env.NEXT_PUBLIC_APP_URL).hostname;
-    const fromOwnApp = [origin, referer].some((v) => (v ? new URL(v).hostname === appHost : false));
+    const fromOwnApp = [origin, referer].some((v) =>
+      v ? new URL(v).hostname === appHost : false
+    );
 
     if (!fromOwnApp && !isOriginAllowed(bot.allowed_domain, origin, referer)) {
       return NextResponse.json({ error: "Origin not allowed" }, { status: 403 });
     }
 
+    // Monthly limit check
     const monthStart = new Date();
     monthStart.setUTCDate(1);
     monthStart.setUTCHours(0, 0, 0, 0);
@@ -49,13 +55,13 @@ export async function POST(req: NextRequest) {
       .eq("bot_id", bot.id)
       .gte("usage_date", monthStart.toISOString().slice(0, 10));
 
-    const usedTokens = usageRows?.reduce((sum, row) => sum + row.total_tokens, 0) ?? 0;
-    const usedCost = usageRows?.reduce((sum, row) => sum + Number(row.total_cost), 0) ?? 0;
-
+    const usedTokens = usageRows?.reduce((s, r) => s + r.total_tokens, 0) ?? 0;
+    const usedCost = usageRows?.reduce((s, r) => s + Number(r.total_cost), 0) ?? 0;
     const hitLimit =
       usedTokens >= bot.monthly_token_limit ||
       usedCost >= Number(bot.monthly_cost_limit);
 
+    // Upsert conversation
     const { data: conversation } = await supabase
       .from("conversations")
       .upsert(
@@ -74,6 +80,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Conversation error" }, { status: 500 });
     }
 
+    // Save user message
     await supabase.from("messages").insert({
       conversation_id: conversation.id,
       role: "user",
@@ -91,28 +98,33 @@ export async function POST(req: NextRequest) {
         token_count: 0,
         cost: 0
       });
-      return NextResponse.json({ reply: fallback, suggestLead: true, limited: true });
+      return NextResponse.json({ reply: fallback, limited: true });
     }
 
+    // Get last N messages only (sliding window)
     const { data: history } = await supabase
       .from("messages")
-      .select("role,content")
+      .select("role, content")
       .eq("conversation_id", conversation.id)
-      .order("created_at", { ascending: true })
-      .limit(20);
+      .order("created_at", { ascending: false })
+      .limit(HISTORY_WINDOW);
+
+    // Reverse to chronological order
+    const messages = (history || []).reverse();
 
     const openrouterMessages = [
       { role: "system", content: bot.system_prompt },
-      ...(history || []).map((m) => ({ role: m.role, content: m.content }))
+      ...messages.map((m) => ({ role: m.role, content: m.content }))
     ];
 
+    // Call OpenRouter
     const llmRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
         "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
-        "X-Title": "AI Widget MVP"
+        "X-Title": "AI Widget"
       },
       body: JSON.stringify({
         model: bot.model,
@@ -124,13 +136,10 @@ export async function POST(req: NextRequest) {
 
     if (!llmRes.ok) {
       const txt = await llmRes.text();
-      console.error("OpenRouter error:", txt);
       return NextResponse.json({ error: `OpenRouter error: ${txt}` }, { status: 502 });
     }
 
     const data: any = await llmRes.json();
-    console.log("OpenRouter response:", JSON.stringify(data));
-
     const reply =
       data.choices?.[0]?.message?.content?.trim() ||
       data.choices?.[0]?.text?.trim() ||
@@ -141,6 +150,7 @@ export async function POST(req: NextRequest) {
     const totalTokens = data.usage?.total_tokens ?? promptTokens + completionTokens;
     const cost = estimateCost(totalTokens, bot.model);
 
+    // Save assistant message
     await supabase.from("messages").insert({
       conversation_id: conversation.id,
       role: "assistant",
@@ -149,8 +159,8 @@ export async function POST(req: NextRequest) {
       cost
     });
 
+    // Update daily usage
     const today = new Date().toISOString().slice(0, 10);
-
     await supabase.rpc("upsert_usage_daily", {
       p_bot_id: bot.id,
       p_usage_date: today,
@@ -160,10 +170,7 @@ export async function POST(req: NextRequest) {
       p_total_cost: cost
     });
 
-    const suggestLead =
-      shouldSuggestLead(payload.message) || shouldSuggestLead(reply);
-
-    return NextResponse.json({ reply, suggestLead, limited: false });
+    return NextResponse.json({ reply, limited: false });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
     return NextResponse.json({ error: message }, { status: 400 });

@@ -12,7 +12,7 @@ const schema = z.object({
 });
 
 // Keep only last N messages to prevent context overflow
-const HISTORY_WINDOW = 10;
+const HISTORY_WINDOW = 20;
 
 export async function POST(req: NextRequest) {
   try {
@@ -112,8 +112,18 @@ export async function POST(req: NextRequest) {
     // Reverse to chronological order
     const messages = (history || []).reverse();
 
+    // Current date for the bot to know today's date
+    const today = new Date().toLocaleDateString("ru-RU", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric"
+    });
+
+    const systemPrompt = `Сегодня ${today}.\n\n${bot.system_prompt}`;
+
     const openrouterMessages = [
-      { role: "system", content: bot.system_prompt },
+      { role: "system", content: systemPrompt },
       ...messages.map((m) => ({ role: m.role, content: m.content }))
     ];
 
@@ -160,10 +170,10 @@ export async function POST(req: NextRequest) {
     });
 
     // Update daily usage
-    const today = new Date().toISOString().slice(0, 10);
+    const todayDate = new Date().toISOString().slice(0, 10);
     await supabase.rpc("upsert_usage_daily", {
       p_bot_id: bot.id,
-      p_usage_date: today,
+      p_usage_date: todayDate,
       p_prompt_tokens: promptTokens,
       p_completion_tokens: completionTokens,
       p_total_tokens: totalTokens,

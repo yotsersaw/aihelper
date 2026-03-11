@@ -20,6 +20,7 @@ export function ChatWidget({
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -33,16 +34,39 @@ export function ChatWidget({
     return id;
   }, [botId]);
 
+  // Load chat history on mount
+  useEffect(() => {
+    if (sessionId === "server") return;
+
+    async function loadHistory() {
+      try {
+        const res = await fetch(`/api/history?botId=${botId}&sessionId=${sessionId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.messages?.length > 0) {
+            setMessages(data.messages);
+          }
+        }
+      } catch {
+        // silently fail - just show empty chat
+      } finally {
+        setHistoryLoading(false);
+      }
+    }
+
+    loadHistory();
+  }, [botId, sessionId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
   // Auto-focus input after bot replies
   useEffect(() => {
-    if (!loading) {
+    if (!loading && !historyLoading) {
       inputRef.current?.focus();
     }
-  }, [loading]);
+  }, [loading, historyLoading]);
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
@@ -101,31 +125,34 @@ export function ChatWidget({
 
       {/* Messages */}
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 text-sm">
-        {messages.length === 0 && (
-          <p className="text-slate-400 text-center mt-8">
-            {welcomeMessage}
-          </p>
-        )}
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={
-              msg.role === "assistant"
-                ? "flex justify-start"
-                : "flex justify-end"
-            }
-          >
-            <div
-              className={
-                msg.role === "assistant"
-                  ? "max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800"
-                  : "max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white"
-              }
-            >
-              {msg.content}
-            </div>
+        {historyLoading ? (
+          <div className="flex justify-center mt-8">
+            <span className="inline-flex gap-1 text-slate-300">
+              <span className="animate-bounce">.</span>
+              <span className="animate-bounce [animation-delay:0.1s]">.</span>
+              <span className="animate-bounce [animation-delay:0.2s]">.</span>
+            </span>
           </div>
-        ))}
+        ) : messages.length === 0 ? (
+          <p className="text-slate-400 text-center mt-8">{welcomeMessage}</p>
+        ) : (
+          messages.map((msg, i) => (
+            <div
+              key={i}
+              className={msg.role === "assistant" ? "flex justify-start" : "flex justify-end"}
+            >
+              <div
+                className={
+                  msg.role === "assistant"
+                    ? "max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800"
+                    : "max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white"
+                }
+              >
+                {msg.content}
+              </div>
+            </div>
+          ))
+        )}
         {loading && (
           <div className="flex justify-start">
             <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-400">
@@ -152,11 +179,11 @@ export function ChatWidget({
           onKeyDown={handleKeyDown}
           placeholder="Напишите сообщение..."
           className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm outline-none focus:border-blue-400 focus:bg-white transition"
-          disabled={loading}
+          disabled={loading || historyLoading}
           autoFocus
         />
         <button
-          disabled={loading || !text.trim()}
+          disabled={loading || historyLoading || !text.trim()}
           className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-40 transition"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">

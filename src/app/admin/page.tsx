@@ -78,13 +78,11 @@ export default async function AdminPage() {
     .order("usage_date", { ascending: false })
     .limit(30);
 
-  // Aggregate stats
   const totalCost = usage?.reduce((s, r) => s + Number(r.total_cost), 0) ?? 0;
   const totalTokens = usage?.reduce((s, r) => s + r.total_tokens, 0) ?? 0;
 
   return (
     <main className="min-h-screen bg-slate-50">
-      {/* Top nav */}
       <nav className="bg-white border-b border-slate-200 px-6 py-3 flex items-center gap-6">
         <span className="font-bold text-slate-800">Admin</span>
         <Link href="/admin" className="text-sm font-medium text-blue-600">Боты</Link>
@@ -97,8 +95,6 @@ export default async function AdminPage() {
       </nav>
 
       <div className="mx-auto max-w-6xl px-6 py-8 space-y-8">
-
-        {/* Stats bar */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white rounded-xl border p-4">
             <p className="text-xs text-slate-500">Всего ботов</p>
@@ -114,7 +110,6 @@ export default async function AdminPage() {
           </div>
         </div>
 
-        {/* Bots table */}
         <section className="bg-white rounded-xl border">
           <div className="flex items-center justify-between px-5 py-4 border-b">
             <h2 className="font-semibold">Боты</h2>
@@ -141,6 +136,14 @@ export default async function AdminPage() {
                   <input name="monthly_cost_limit" type="number" step="0.01" defaultValue="50" placeholder="Лимит $ в месяц" className="rounded-md border p-2 text-sm" />
                   <input name="welcome_message" defaultValue="Привет! Чем могу помочь?" placeholder="Приветствие" className="rounded-md border p-2 text-sm" />
                   <input name="error_message" defaultValue="Извините, произошла ошибка. Попробуйте ещё раз." placeholder="Текст ошибки" className="rounded-md border p-2 text-sm" />
+                  <div>
+                    <label className="text-xs text-slate-500">Имя бота в чате</label>
+                    <input name="bot_name" defaultValue="AI Assistant" placeholder="Например: Алиса" className="w-full rounded-md border p-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Цвет виджета</label>
+                    <input name="widget_color" defaultValue="#2563eb" placeholder="#2563eb" className="w-full rounded-md border p-2 text-sm" />
+                  </div>
                   <div className="col-span-2 flex gap-4 text-sm">
                     <label className="flex items-center gap-2"><input name="is_active" type="checkbox" defaultChecked /> Активен</label>
                     <label className="flex items-center gap-2"><input name="enable_analysis" type="checkbox" defaultChecked /> Анализ лидов</label>
@@ -241,6 +244,14 @@ export default async function AdminPage() {
                               <label className="text-xs text-slate-500">Текст ошибки</label>
                               <input name="error_message" defaultValue={bot.error_message ?? "Извините, произошла ошибка."} className="w-full rounded-md border p-2 text-sm" />
                             </div>
+                            <div>
+                              <label className="text-xs text-slate-500">Имя бота в чате</label>
+                              <input name="bot_name" defaultValue={bot.bot_name ?? "AI Assistant"} className="w-full rounded-md border p-2 text-sm" />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500">Цвет виджета</label>
+                              <input name="widget_color" defaultValue={bot.widget_color ?? "#2563eb"} className="w-full rounded-md border p-2 text-sm" />
+                            </div>
                             <div className="col-span-2 flex gap-4 text-sm">
                               <label className="flex items-center gap-2"><input name="is_active" type="checkbox" defaultChecked={bot.is_active} /> Активен</label>
                               <label className="flex items-center gap-2"><input name="enable_analysis" type="checkbox" defaultChecked={bot.enable_analysis ?? true} /> Анализ лидов</label>
@@ -264,12 +275,7 @@ export default async function AdminPage() {
                       <form action={deleteBot}>
                         <input type="hidden" name="id" value={bot.id} />
                         <input type="hidden" name="confirm_name" value={bot.company_name} />
-                        <button
-                          formAction={deleteBot}
-                          className="text-xs text-red-400 hover:text-red-600 px-2 py-1"
-                        >
-                          Del
-                        </button>
+                        <button formAction={deleteBot} className="text-xs text-red-400 hover:text-red-600 px-2 py-1">Del</button>
                       </form>
                     </div>
                   </td>

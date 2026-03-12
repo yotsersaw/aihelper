@@ -7,6 +7,8 @@ type Props = {
   embedded?: boolean;
   welcomeMessage?: string;
   errorMessage?: string;
+  botName?: string;
+  widgetColor?: string;
 };
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -15,7 +17,9 @@ export function ChatWidget({
   botId,
   embedded = false,
   welcomeMessage = "Привет! Чем могу помочь?",
-  errorMessage = "Извините, произошла ошибка. Попробуйте ещё раз."
+  errorMessage = "Извините, произошла ошибка. Попробуйте ещё раз.",
+  botName = "AI Assistant",
+  widgetColor = "#2563eb"
 }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
@@ -37,7 +41,6 @@ export function ChatWidget({
   // Load chat history on mount
   useEffect(() => {
     if (sessionId === "server") return;
-
     async function loadHistory() {
       try {
         const res = await fetch(`/api/history?botId=${botId}&sessionId=${sessionId}`);
@@ -48,12 +51,11 @@ export function ChatWidget({
           }
         }
       } catch {
-        // silently fail - just show empty chat
+        // silently fail
       } finally {
         setHistoryLoading(false);
       }
     }
-
     loadHistory();
   }, [botId, sessionId]);
 
@@ -61,7 +63,6 @@ export function ChatWidget({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // Auto-focus input after bot replies
   useEffect(() => {
     if (!loading && !historyLoading) {
       inputRef.current?.focus();
@@ -91,13 +92,9 @@ export function ChatWidget({
 
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Request failed");
-
       setMessages((prev) => [...prev, { role: "assistant", content: payload.reply }]);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: errorMessage }
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", content: errorMessage }]);
     } finally {
       setLoading(false);
     }
@@ -111,16 +108,16 @@ export function ChatWidget({
   }
 
   return (
-    <div
-      className={`flex h-full flex-col bg-white ${
-        embedded ? "" : "rounded-xl border border-slate-200 shadow-sm"
-      }`}
-    >
+    <div className={`flex h-full flex-col bg-white ${embedded ? "" : "rounded-xl border border-slate-200 shadow-sm"}`}>
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
-        <div className="h-2 w-2 rounded-full bg-emerald-400" />
-        <span className="text-sm font-semibold text-slate-700">AI Assistant</span>
-        <span className="ml-auto text-xs text-slate-400">Online</span>
+      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3" style={{ borderBottomColor: `${widgetColor}22` }}>
+        <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: widgetColor }}>
+          {botName.charAt(0).toUpperCase()}
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-700">{botName}</p>
+          <p className="text-xs text-emerald-500">● Online</p>
+        </div>
       </div>
 
       {/* Messages */}
@@ -137,16 +134,13 @@ export function ChatWidget({
           <p className="text-slate-400 text-center mt-8">{welcomeMessage}</p>
         ) : (
           messages.map((msg, i) => (
-            <div
-              key={i}
-              className={msg.role === "assistant" ? "flex justify-start" : "flex justify-end"}
-            >
+            <div key={i} className={msg.role === "assistant" ? "flex justify-start" : "flex justify-end"}>
               <div
-                className={
-                  msg.role === "assistant"
-                    ? "max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800"
-                    : "max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white"
+                className={msg.role === "assistant"
+                  ? "max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800"
+                  : "max-w-[80%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-white"
                 }
+                style={msg.role === "user" ? { backgroundColor: widgetColor } : {}}
               >
                 {msg.content}
               </div>
@@ -168,23 +162,22 @@ export function ChatWidget({
       </div>
 
       {/* Input */}
-      <form
-        onSubmit={sendMessage}
-        className="flex items-center gap-2 border-t border-slate-100 px-3 py-3"
-      >
+      <form onSubmit={sendMessage} className="flex items-center gap-2 border-t border-slate-100 px-3 py-3">
         <input
           ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Напишите сообщение..."
-          className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm outline-none focus:border-blue-400 focus:bg-white transition"
+          className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm outline-none focus:bg-white transition"
+          style={{ borderColor: text ? widgetColor : undefined }}
           disabled={loading || historyLoading}
           autoFocus
         />
         <button
           disabled={loading || historyLoading || !text.trim()}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-40 transition"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-white disabled:opacity-40 transition"
+          style={{ backgroundColor: widgetColor }}
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
             <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />

@@ -9,17 +9,19 @@ export async function GET(request: Request) {
 
   let autoOpenDelay = 8;
   let badgeMessage = "👋 Hi! Need help? I can answer questions and book appointments.";
+  let widgetColor = "#2563eb";
 
   if (botId) {
     const supabase = getServiceSupabase();
     const { data } = await supabase
       .from("bots")
-      .select("auto_open_delay, badge_message")
+      .select("auto_open_delay, badge_message, widget_color")
       .eq("public_bot_id", botId)
       .single();
     if (data) {
       autoOpenDelay = data.auto_open_delay ?? 8;
       badgeMessage = data.badge_message ?? badgeMessage;
+      widgetColor = data.widget_color ?? widgetColor;
     }
   }
 
@@ -30,6 +32,7 @@ export async function GET(request: Request) {
   var baseUrl = new URL(script.src).origin;
   var autoOpenDelay = ${autoOpenDelay * 1000};
   var badgeMessage = ${JSON.stringify(badgeMessage)};
+  var widgetColor = ${JSON.stringify(widgetColor)};
   var opened = false;
 
   var style = document.createElement('style');
@@ -44,14 +47,12 @@ export async function GET(request: Request) {
       border-radius: 50%;
       border: none;
       cursor: pointer;
-      box-shadow: 0 8px 25px rgba(37,99,235,0.45);
       display: flex;
       align-items: center;
       justify-content: center;
       transition: transform 0.2s ease, box-shadow 0.2s ease;
-      background: linear-gradient(135deg, #7c3aed, #2563eb);
     }
-    .selvanto-btn:hover { transform: scale(1.08); box-shadow: 0 12px 30px rgba(37,99,235,0.55); }
+    .selvanto-btn:hover { transform: scale(1.08); }
     .selvanto-btn svg { pointer-events: none; }
     .selvanto-frame {
       position: fixed;
@@ -130,6 +131,8 @@ export async function GET(request: Request) {
   var button = document.createElement('button');
   button.className = 'selvanto-btn';
   button.setAttribute('aria-label', 'Open chat');
+  button.style.background = widgetColor;
+  button.style.boxShadow = '0 8px 25px ' + widgetColor + '66';
 
   var chatIcon = \`<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="white"/></svg>\`;
   var closeIcon = \`<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>\`;

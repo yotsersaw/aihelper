@@ -23,6 +23,8 @@ async function createBot(formData: FormData) {
     monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
     welcome_message: String(formData.get("welcome_message") || "Привет! Чем могу помочь?").trim(),
     error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
+    auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
+    badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
     enable_analysis: formData.get("enable_analysis") === "on",
     is_active: formData.get("is_active") === "on"
   });
@@ -50,6 +52,8 @@ async function updateBot(formData: FormData) {
     monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
     welcome_message: String(formData.get("welcome_message") || "Привет! Чем могу помочь?").trim(),
     error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
+    auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
+    badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
     enable_analysis: formData.get("enable_analysis") === "on",
     is_active: formData.get("is_active") === "on",
     updated_at: new Date().toISOString()
@@ -143,6 +147,14 @@ export default async function AdminPage() {
                   <div>
                     <label className="text-xs text-slate-500">Цвет виджета</label>
                     <input name="widget_color" defaultValue="#2563eb" placeholder="#2563eb" className="w-full rounded-md border p-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Задержка пузыря (сек, 0 = выкл)</label>
+                    <input name="auto_open_delay" type="number" defaultValue="8" min="0" max="60" className="w-full rounded-md border p-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Сообщение в пузыре</label>
+                    <input name="badge_message" defaultValue="👋 Hi! Need help? I can answer questions and book appointments." className="w-full rounded-md border p-2 text-sm" />
                   </div>
                   <div className="col-span-2 flex gap-4 text-sm">
                     <label className="flex items-center gap-2"><input name="is_active" type="checkbox" defaultChecked /> Активен</label>
@@ -252,6 +264,14 @@ export default async function AdminPage() {
                               <label className="text-xs text-slate-500">Цвет виджета</label>
                               <input name="widget_color" defaultValue={bot.widget_color ?? "#2563eb"} className="w-full rounded-md border p-2 text-sm" />
                             </div>
+                            <div>
+                              <label className="text-xs text-slate-500">Задержка пузыря (сек, 0 = выкл)</label>
+                              <input name="auto_open_delay" type="number" min="0" max="60" defaultValue={bot.auto_open_delay ?? 8} className="w-full rounded-md border p-2 text-sm" />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500">Сообщение в пузыре</label>
+                              <input name="badge_message" defaultValue={bot.badge_message ?? "👋 Hi! Need help? I can answer questions and book appointments."} className="w-full rounded-md border p-2 text-sm" />
+                            </div>
                             <div className="col-span-2 flex gap-4 text-sm">
                               <label className="flex items-center gap-2"><input name="is_active" type="checkbox" defaultChecked={bot.is_active} /> Активен</label>
                               <label className="flex items-center gap-2"><input name="enable_analysis" type="checkbox" defaultChecked={bot.enable_analysis ?? true} /> Анализ лидов</label>
@@ -266,7 +286,7 @@ export default async function AdminPage() {
                             </div>
                             <div className="col-span-2">
                               <label className="text-xs text-slate-500">Embed код</label>
-                              <code className="block bg-slate-50 rounded p-2 text-xs break-all">{`<script src="https://aihelper-mauve.vercel.app/widget.js" data-bot-id="${bot.public_bot_id}"></script>`}</code>
+                              <code className="block bg-slate-50 rounded p-2 text-xs break-all">{`<script src="https://aihelper-mauve.vercel.app/widget.js?botId=${bot.public_bot_id}" data-bot-id="${bot.public_bot_id}"></script>`}</code>
                             </div>
                             <button className="col-span-2 rounded-md bg-slate-900 py-2 text-sm font-medium text-white">Сохранить</button>
                           </form>

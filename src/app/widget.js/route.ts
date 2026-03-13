@@ -1,17 +1,37 @@
 import { NextResponse } from "next/server";
+import { getServiceSupabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const botId = searchParams.get("botId");
+
+  let autoOpenDelay = 8;
+  let badgeMessage = "👋 Hi! Need help? I can answer questions and book appointments.";
+
+  if (botId) {
+    const supabase = getServiceSupabase();
+    const { data } = await supabase
+      .from("bots")
+      .select("auto_open_delay, badge_message")
+      .eq("public_bot_id", botId)
+      .single();
+    if (data) {
+      autoOpenDelay = data.auto_open_delay ?? 8;
+      badgeMessage = data.badge_message ?? badgeMessage;
+    }
+  }
+
   const js = `(function(){
   var script = document.currentScript;
   var botId = script && script.getAttribute('data-bot-id');
   if (!botId) return;
   var baseUrl = new URL(script.src).origin;
-  var autoOpenDelay = parseInt(script.getAttribute('data-auto-open') || '8000');
+  var autoOpenDelay = ${autoOpenDelay * 1000};
+  var badgeMessage = ${JSON.stringify(badgeMessage)};
   var opened = false;
 
-  // Inject styles
   var style = document.createElement('style');
   style.textContent = \`
     .selvanto-btn {
@@ -31,10 +51,7 @@ export async function GET() {
       transition: transform 0.2s ease, box-shadow 0.2s ease;
       background: linear-gradient(135deg, #7c3aed, #2563eb);
     }
-    .selvanto-btn:hover {
-      transform: scale(1.08);
-      box-shadow: 0 12px 30px rgba(37,99,235,0.55);
-    }
+    .selvanto-btn:hover { transform: scale(1.08); box-shadow: 0 12px 30px rgba(37,99,235,0.55); }
     .selvanto-btn svg { pointer-events: none; }
     .selvanto-frame {
       position: fixed;
@@ -54,13 +71,8 @@ export async function GET() {
       transform: translateY(16px) scale(0.97);
       transition: opacity 0.25s ease, transform 0.25s ease;
     }
-    .selvanto-frame.open {
-      display: block;
-    }
-    .selvanto-frame.visible {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
+    .selvanto-frame.open { display: block; }
+    .selvanto-frame.visible { opacity: 1; transform: translateY(0) scale(1); }
     .selvanto-badge {
       position: fixed;
       right: 82px;
@@ -72,7 +84,7 @@ export async function GET() {
       font: 13px/1.4 sans-serif;
       color: #1e293b;
       box-shadow: 0 4px 20px rgba(0,0,0,0.14);
-      max-width: 220px;
+      max-width: 240px;
       cursor: pointer;
       animation: selvanto-fadein 0.4s ease;
     }
@@ -97,17 +109,9 @@ export async function GET() {
       line-height: 1;
       padding: 0;
     }
-    .selvanto-typing {
-      display: inline-flex;
-      gap: 3px;
-      align-items: center;
-      height: 16px;
-    }
+    .selvanto-typing { display: inline-flex; gap: 3px; align-items: center; height: 16px; }
     .selvanto-typing span {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: #94a3b8;
+      width: 5px; height: 5px; border-radius: 50%; background: #94a3b8;
       animation: selvanto-bounce 1.2s infinite;
     }
     .selvanto-typing span:nth-child(2) { animation-delay: 0.2s; }
@@ -123,29 +127,19 @@ export async function GET() {
   \`;
   document.head.appendChild(style);
 
-  // Chat button
   var button = document.createElement('button');
   button.className = 'selvanto-btn';
   button.setAttribute('aria-label', 'Open chat');
-  button.innerHTML = \`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="white"/>
-  </svg>\`;
 
-  // Close icon SVG
-  var closeIcon = \`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-  </svg>\`;
-  var chatIcon = \`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="white"/>
-  </svg>\`;
+  var chatIcon = \`<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="white"/></svg>\`;
+  var closeIcon = \`<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>\`;
+  button.innerHTML = chatIcon;
 
-  // Iframe
   var frame = document.createElement('iframe');
   frame.src = baseUrl + '/widget/' + encodeURIComponent(botId);
   frame.className = 'selvanto-frame';
   frame.setAttribute('title', 'AI Chat Widget');
 
-  // Badge with typing animation
   var badge = document.createElement('div');
   badge.className = 'selvanto-badge';
   badge.style.display = 'none';
@@ -170,33 +164,24 @@ export async function GET() {
     if (opened) { closeChat(); } else { openChat(); }
   });
 
-  // Badge typing then show message
   function showBadge(msg) {
     badge.style.display = 'block';
     var typingEl = badge.querySelector('.selvanto-typing');
     typingEl.style.display = 'inline-flex';
-    
     setTimeout(function(){
       typingEl.style.display = 'none';
-      typingEl.insertAdjacentHTML('afterend', '<span id="selvanto-msg">' + msg + '</span>');
+      typingEl.insertAdjacentHTML('afterend', '<span>' + msg + '</span>');
     }, 1500);
   }
 
-  // Auto open after delay
   if (autoOpenDelay > 0) {
     setTimeout(function(){
-      if (!opened) {
-        showBadge('👋 Hi! Need help? I can answer questions and book appointments.');
-      }
+      if (!opened) showBadge(badgeMessage);
     }, autoOpenDelay);
   }
 
-  // Badge click opens chat
   badge.addEventListener('click', function(e){
-    if (e.target.id === 'selvanto-badge-close') {
-      badge.style.display = 'none';
-      return;
-    }
+    if (e.target.id === 'selvanto-badge-close') { badge.style.display = 'none'; return; }
     openChat();
   });
 
@@ -208,7 +193,7 @@ export async function GET() {
   return new NextResponse(js, {
     headers: {
       "content-type": "application/javascript; charset=utf-8",
-      "cache-control": "public, max-age=300"
+      "cache-control": "no-store"
     }
   });
 }

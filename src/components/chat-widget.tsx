@@ -13,6 +13,27 @@ type Props = {
 
 type Message = { role: "user" | "assistant"; content: string };
 
+function getOrCreateSessionId(botId: string): string {
+  const key = `chat_session_${botId}`;
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+    return id;
+  } catch {
+    try {
+      const existing = sessionStorage.getItem(key);
+      if (existing) return existing;
+      const id = crypto.randomUUID();
+      sessionStorage.setItem(key, id);
+      return id;
+    } catch {
+      return crypto.randomUUID();
+    }
+  }
+}
+
 export function ChatWidget({
   botId,
   embedded = false,
@@ -30,15 +51,9 @@ export function ChatWidget({
 
   const sessionId = useMemo(() => {
     if (typeof window === "undefined") return "server";
-    const key = `chat_session_${botId}`;
-    const existing = localStorage.getItem(key);
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    localStorage.setItem(key, id);
-    return id;
+    return getOrCreateSessionId(botId);
   }, [botId]);
 
-  // Load chat history on mount
   useEffect(() => {
     if (sessionId === "server") return;
     async function loadHistory() {

@@ -8,22 +8,201 @@ export async function GET() {
   var botId = script && script.getAttribute('data-bot-id');
   if (!botId) return;
   var baseUrl = new URL(script.src).origin;
+  var autoOpenDelay = parseInt(script.getAttribute('data-auto-open') || '8000');
+  var opened = false;
 
+  // Inject styles
+  var style = document.createElement('style');
+  style.textContent = \`
+    .selvanto-btn {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 2147483647;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 8px 25px rgba(37,99,235,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      background: linear-gradient(135deg, #7c3aed, #2563eb);
+    }
+    .selvanto-btn:hover {
+      transform: scale(1.08);
+      box-shadow: 0 12px 30px rgba(37,99,235,0.55);
+    }
+    .selvanto-btn svg { pointer-events: none; }
+    .selvanto-frame {
+      position: fixed;
+      right: 20px;
+      bottom: 88px;
+      width: 370px;
+      max-width: calc(100vw - 24px);
+      height: 580px;
+      max-height: 75vh;
+      border: none;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.22);
+      z-index: 2147483647;
+      background: #fff;
+      display: none;
+      opacity: 0;
+      transform: translateY(16px) scale(0.97);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    .selvanto-frame.open {
+      display: block;
+    }
+    .selvanto-frame.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    .selvanto-badge {
+      position: fixed;
+      right: 82px;
+      bottom: 28px;
+      z-index: 2147483646;
+      background: #fff;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font: 13px/1.4 sans-serif;
+      color: #1e293b;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+      max-width: 220px;
+      cursor: pointer;
+      animation: selvanto-fadein 0.4s ease;
+    }
+    .selvanto-badge::after {
+      content: '';
+      position: absolute;
+      right: -8px;
+      bottom: 14px;
+      border: 8px solid transparent;
+      border-left-color: #fff;
+      border-right: 0;
+    }
+    .selvanto-badge-close {
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #94a3b8;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0;
+    }
+    .selvanto-typing {
+      display: inline-flex;
+      gap: 3px;
+      align-items: center;
+      height: 16px;
+    }
+    .selvanto-typing span {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #94a3b8;
+      animation: selvanto-bounce 1.2s infinite;
+    }
+    .selvanto-typing span:nth-child(2) { animation-delay: 0.2s; }
+    .selvanto-typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes selvanto-bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-5px); }
+    }
+    @keyframes selvanto-fadein {
+      from { opacity: 0; transform: translateX(10px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+  \`;
+  document.head.appendChild(style);
+
+  // Chat button
   var button = document.createElement('button');
-  button.textContent = 'Chat';
-  button.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2147483647;background:#2563eb;color:#fff;border:none;border-radius:999px;padding:12px 16px;font:600 14px sans-serif;cursor:pointer;box-shadow:0 8px 20px rgba(0,0,0,.2)';
+  button.className = 'selvanto-btn';
+  button.setAttribute('aria-label', 'Open chat');
+  button.innerHTML = \`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="white"/>
+  </svg>\`;
 
+  // Close icon SVG
+  var closeIcon = \`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  </svg>\`;
+  var chatIcon = \`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="white"/>
+  </svg>\`;
+
+  // Iframe
   var frame = document.createElement('iframe');
   frame.src = baseUrl + '/widget/' + encodeURIComponent(botId);
-  frame.style.cssText = 'position:fixed;right:20px;bottom:80px;width:360px;max-width:calc(100vw - 24px);height:560px;max-height:70vh;border:1px solid #d1d5db;border-radius:14px;box-shadow:0 15px 45px rgba(0,0,0,.2);z-index:2147483647;background:#fff;display:none';
+  frame.className = 'selvanto-frame';
   frame.setAttribute('title', 'AI Chat Widget');
 
+  // Badge with typing animation
+  var badge = document.createElement('div');
+  badge.className = 'selvanto-badge';
+  badge.style.display = 'none';
+  badge.innerHTML = \`<button class="selvanto-badge-close" id="selvanto-badge-close">✕</button><div class="selvanto-typing"><span></span><span></span><span></span></div>\`;
+
+  function openChat() {
+    opened = true;
+    badge.style.display = 'none';
+    frame.classList.add('open');
+    button.innerHTML = closeIcon;
+    setTimeout(function(){ frame.classList.add('visible'); }, 10);
+  }
+
+  function closeChat() {
+    opened = false;
+    frame.classList.remove('visible');
+    button.innerHTML = chatIcon;
+    setTimeout(function(){ frame.classList.remove('open'); }, 250);
+  }
+
   button.addEventListener('click', function(){
-    frame.style.display = frame.style.display === 'none' ? 'block' : 'none';
+    if (opened) { closeChat(); } else { openChat(); }
+  });
+
+  // Badge typing then show message
+  function showBadge(msg) {
+    badge.style.display = 'block';
+    var typingEl = badge.querySelector('.selvanto-typing');
+    typingEl.style.display = 'inline-flex';
+    
+    setTimeout(function(){
+      typingEl.style.display = 'none';
+      typingEl.insertAdjacentHTML('afterend', '<span id="selvanto-msg">' + msg + '</span>');
+    }, 1500);
+  }
+
+  // Auto open after delay
+  if (autoOpenDelay > 0) {
+    setTimeout(function(){
+      if (!opened) {
+        showBadge('👋 Hi! Need help? I can answer questions and book appointments.');
+      }
+    }, autoOpenDelay);
+  }
+
+  // Badge click opens chat
+  badge.addEventListener('click', function(e){
+    if (e.target.id === 'selvanto-badge-close') {
+      badge.style.display = 'none';
+      return;
+    }
+    openChat();
   });
 
   document.body.appendChild(button);
   document.body.appendChild(frame);
+  document.body.appendChild(badge);
 })();`;
 
   return new NextResponse(js, {

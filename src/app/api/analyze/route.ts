@@ -4,6 +4,49 @@ import { env } from "@/lib/env";
 
 const DEFAULT_ANALYSIS_PROMPT = 'Extract from the conversation: client name, phone, email, messenger contact (Telegram/Instagram/WhatsApp if mentioned), and the reason for inquiry. Return ONLY valid JSON: {"name":"...","phone":"...","email":"...","messenger":"...","note":"...","has_contact":true/false}. Set has_contact=true if at least one contact detail is present (name, phone, email or messenger).';
 
+// Fallback models if analysis_model not set
+const DEFAULT_ANALYSIS_MODELS = ["openai/gpt-4o-mini", "anthropic/claude-3-haiku"];
+
+async function callLLM(
+  model: string,
+  systemPrompt: string,
+  userContent: string
+): Promise<{ ok: boolean; raw?: string; error?: string }> {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
+        "X-Title": "AI Widget",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: 400,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent }
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error(`[Analyze] Model ${model} failed: ${res.status} ${txt}`);
+      return { ok: false, error: txt };
+    }
+
+    const data = await res.json();
+    const raw = data.choices?.[0]?.message?.content?.trim() || "";
+    return { ok: true, raw };
+  } catch (e) {
+    console.error(`[Analyze] Model ${model} exception:`, e);
+    return { ok: false, error: String(e) };
+  }
+}
+
 async function sendLeadEmail(
   to: string,
   companyName: string,
@@ -23,11 +66,11 @@ async function sendLeadEmail(
       html: `
         <h2>New Lead</h2>
         <p><b>Company:</b> ${companyName}</p>
-        ${lead.name ? `<p><b>Name:</b> ${lead.name}</p>` : ""}
-        ${lead.phone ? `<p><b>Phone:</b> ${lead.phone}</p>` : ""}
-        ${lead.email ? `<p><b>Email:</b> ${lead.email}</p>` : ""}
+        ${lead.name      ? `<p><b>Name:</b> ${lead.name}</p>`           : ""}
+        ${lead.phone     ? `<p><b>Phone:</b> ${lead.phone}</p>`         : ""}
+        ${lead.email     ? `<p><b>Email:</b> ${lead.email}</p>`         : ""}
         ${lead.messenger ? `<p><b>Messenger:</b> ${lead.messenger}</p>` : ""}
-        ${lead.note ? `<p><b>Note:</b> ${lead.note}</p>` : ""}
+        ${lead.note      ? `<p><b>Note:</b> ${lead.note}</p>`           : ""}
       `,
     }),
   });
@@ -36,14 +79,11 @@ async function sendLeadEmail(
 async function sendTelegramMessage(chatId: string, text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
-  const res = await fetch(
-    `https://api.telegram.org/bot${token}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
-    }
-  );
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+  });
   if (!res.ok) {
     const err = await res.text();
     console.error("[Telegram] sendMessage failed:", err);
@@ -83,8 +123,7 @@ export async function POST(req: NextRequest) {
   let processed = 0;
 
   for (const conv of conversations) {
-    const bot =
-      Array.isArray(conv.bots) ? conv.bots[0] ?? null : (conv.bots as any);
+    const bot = Array.isArray(conv.bots) ? conv.bots[0] ?? null : (conv.bots as any);
 
     if (!bot || bot.enable_analysis === false) {
       await supabase
@@ -114,44 +153,55 @@ export async function POST(req: NextRequest) {
       .map((m) => `${m.role === "user" ? "Client" : "Bot"}: ${m.content}`)
       .join("\n");
 
-    console.log(`[Analyze] conv ${conv.id}: sending to LLM, dialog length=${dialog.length}`);
-
-    const analysisModel = bot.analysis_model || "openai/gpt-4o-mini";
     const analysisPrompt = bot.analysis_prompt || DEFAULT_ANALYSIS_PROMPT;
+    const systemPrompt = `${analysisPrompt}\n\nReturn ONLY valid JSON, no markdown, no explanation.`;
+    const userContent = `Analyze this dialog:\n\n${dialog}`;
 
-    const llmRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
-        "X-Title": "AI Widget",
-      },
-      body: JSON.stringify({
-        model: analysisModel,
-        temperature: 0,
-        max_tokens: 400,
-        messages: [
-          {
-            role: "system",
-            content: `${analysisPrompt}\n\nReturn ONLY valid JSON, no markdown, no explanation.`,
-          },
-          {
-            role: "user",
-            content: `Analyze this dialog:\n\n${dialog}`,
-          },
-        ],
-      }),
-    });
+    // Парсим модели через запятую, добавляем дефолтные как запасные
+    const configuredModels = (bot.analysis_model as string || "")
+      .split(",")
+      .map((m: string) => m.trim())
+      .filter(Boolean);
 
-    if (!llmRes.ok) {
-      const errText = await llmRes.text();
-      console.error(`[Analyze] conv ${conv.id}: LLM error ${llmRes.status}:`, errText);
+    const models = configuredModels.length > 0
+      ? configuredModels
+      : DEFAULT_ANALYSIS_MODELS;
+
+    // Пробуем каждую модель, для первой делаем 2 попытки
+    let raw = "";
+    let success = false;
+
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
+      const attempts = i === 0 ? 2 : 1; // первую модель пробуем дважды
+
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        if (attempt > 1) {
+          console.log(`[Analyze] conv ${conv.id}: retrying model ${model}...`);
+          await new Promise((r) => setTimeout(r, 2000)); // ждём 2 сек перед retry
+        }
+
+        console.log(`[Analyze] conv ${conv.id}: trying model ${model} (attempt ${attempt})`);
+        const result = await callLLM(model, systemPrompt, userContent);
+
+        if (result.ok && result.raw) {
+          raw = result.raw;
+          success = true;
+          console.log(`[Analyze] conv ${conv.id}: model ${model} succeeded`);
+          break;
+        }
+      }
+
+      if (success) break;
+      console.warn(`[Analyze] conv ${conv.id}: model ${model} failed, trying next...`);
+    }
+
+    // Все модели упали — не помечаем analyzed, попробуем в следующем цикле
+    if (!success) {
+      console.error(`[Analyze] conv ${conv.id}: all models failed, will retry next cron`);
       continue;
     }
 
-    const llmData: any = await llmRes.json();
-    const raw = llmData.choices?.[0]?.message?.content?.trim() || "";
     console.log(`[Analyze] conv ${conv.id}: LLM raw response:`, raw);
 
     let parsed: any;
@@ -174,7 +224,7 @@ export async function POST(req: NextRequest) {
       .update({ analyzed: true, analyzed_at: new Date().toISOString() })
       .eq("id", conv.id);
 
-    // ФИХ: создаём лид если есть хоть что-то — имя, телефон, email или мессенджер
+    // Создаём лид если есть хоть что-то
     const hasContact =
       parsed.has_contact === true ||
       !!parsed.phone ||

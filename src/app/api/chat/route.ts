@@ -14,6 +14,47 @@ const schema = z.object({
 // Keep only last N messages to prevent context overflow
 const HISTORY_WINDOW = 20;
 
+// Fallback message when all models are down
+const ALL_MODELS_FAILED =
+  "I'm having technical difficulties right now. Please leave your phone number or email and we'll get back to you shortly!";
+
+async function callOpenRouter(
+  model: string,
+  messages: any[],
+  temperature: number,
+  maxTokens: number
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
+        "X-Title": "AI Widget"
+      },
+      body: JSON.stringify({
+        model,
+        temperature,
+        max_tokens: maxTokens,
+        messages
+      })
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error(`[Chat] Model ${model} failed: ${res.status} ${txt}`);
+      return { ok: false, error: txt };
+    }
+
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    console.error(`[Chat] Model ${model} exception:`, e);
+    return { ok: false, error: String(e) };
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const payload = schema.parse(await req.json());
@@ -127,38 +168,57 @@ export async function POST(req: NextRequest) {
       ...messages.map((m) => ({ role: m.role, content: m.content }))
     ];
 
-    // Call OpenRouter
-    const llmRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
-        "X-Title": "AI Widget"
-      },
-      body: JSON.stringify({
-        model: bot.model,
-        temperature: bot.temperature,
-        max_tokens: bot.max_completion_tokens,
-        messages: openrouterMessages
-      })
-    });
+    // Parse models — поддерживаем несколько через запятую
+    const models = (bot.model as string)
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean);
 
-    if (!llmRes.ok) {
-      const txt = await llmRes.text();
-      return NextResponse.json({ error: `OpenRouter error: ${txt}` }, { status: 502 });
+    // Пробуем каждую модель по очереди
+    let llmData: any = null;
+    let usedModel = models[0];
+
+    for (const model of models) {
+      console.log(`[Chat] Trying model: ${model}`);
+      const result = await callOpenRouter(
+        model,
+        openrouterMessages,
+        bot.temperature,
+        bot.max_completion_tokens
+      );
+
+      if (result.ok && result.data) {
+        llmData = result.data;
+        usedModel = model;
+        console.log(`[Chat] Model ${model} succeeded`);
+        break;
+      }
+
+      console.warn(`[Chat] Model ${model} failed, trying next...`);
     }
 
-    const data: any = await llmRes.json();
-    const reply =
-      data.choices?.[0]?.message?.content?.trim() ||
-      data.choices?.[0]?.text?.trim() ||
-      "Извините, не получилось сгенерировать ответ.";
+    // Все модели упали — отвечаем вежливым сообщением с просьбой оставить контакт
+    if (!llmData) {
+      console.error(`[Chat] All models failed for bot ${bot.id}`);
+      await supabase.from("messages").insert({
+        conversation_id: conversation.id,
+        role: "assistant",
+        content: ALL_MODELS_FAILED,
+        token_count: 0,
+        cost: 0
+      });
+      return NextResponse.json({ reply: ALL_MODELS_FAILED, limited: false });
+    }
 
-    const promptTokens = data.usage?.prompt_tokens ?? 0;
-    const completionTokens = data.usage?.completion_tokens ?? 0;
-    const totalTokens = data.usage?.total_tokens ?? promptTokens + completionTokens;
-    const cost = estimateCost(totalTokens, bot.model);
+    const reply =
+      llmData.choices?.[0]?.message?.content?.trim() ||
+      llmData.choices?.[0]?.text?.trim() ||
+      "Sorry, I couldn't generate a response.";
+
+    const promptTokens = llmData.usage?.prompt_tokens ?? 0;
+    const completionTokens = llmData.usage?.completion_tokens ?? 0;
+    const totalTokens = llmData.usage?.total_tokens ?? promptTokens + completionTokens;
+    const cost = estimateCost(totalTokens, usedModel);
 
     // Save assistant message
     await supabase.from("messages").insert({

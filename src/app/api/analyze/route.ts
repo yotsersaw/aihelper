@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase";
 import { env } from "@/lib/env";
 
-const DEFAULT_ANALYSIS_PROMPT =
-  'Извлеки из разговора: имя клиента, телефон, email (если есть), суть обращения. Верни JSON: {"name":"...","phone":"...","email":"...","note":"...","has_contact":true/false}. Если контактных данных нет — has_contact: false.';
+const DEFAULT_ANALYSIS_PROMPT = 'Extract from the conversation: client name, phone, email, messenger contact (Telegram/Instagram/WhatsApp if mentioned), and the reason for inquiry. Return ONLY valid JSON: {"name":"...","phone":"...","email":"...","messenger":"...","note":"...","has_contact":true/false}. Set has_contact=true if at least one contact detail is present (name, phone, email or messenger).';
 
 async function sendLeadEmail(
   to: string,
   companyName: string,
-  lead: { name?: string; phone?: string; email?: string; note?: string }
+  lead: { name?: string; phone?: string; email?: string; messenger?: string; note?: string }
 ) {
   if (!process.env.RESEND_API_KEY) return;
   await fetch("https://api.resend.com/emails", {
@@ -20,14 +19,15 @@ async function sendLeadEmail(
     body: JSON.stringify({
       from: "AI Assistant <onboarding@resend.dev>",
       to,
-      subject: `Новый лид — ${companyName}`,
+      subject: `New Lead — ${companyName}`,
       html: `
-        <h2>Новый лид с сайта</h2>
-        <p><b>Компания:</b> ${companyName}</p>
-        ${lead.name ? `<p><b>Имя:</b> ${lead.name}</p>` : ""}
-        ${lead.phone ? `<p><b>Телефон:</b> ${lead.phone}</p>` : ""}
+        <h2>New Lead</h2>
+        <p><b>Company:</b> ${companyName}</p>
+        ${lead.name ? `<p><b>Name:</b> ${lead.name}</p>` : ""}
+        ${lead.phone ? `<p><b>Phone:</b> ${lead.phone}</p>` : ""}
         ${lead.email ? `<p><b>Email:</b> ${lead.email}</p>` : ""}
-        ${lead.note ? `<p><b>Суть запроса:</b> ${lead.note}</p>` : ""}
+        ${lead.messenger ? `<p><b>Messenger:</b> ${lead.messenger}</p>` : ""}
+        ${lead.note ? `<p><b>Note:</b> ${lead.note}</p>` : ""}
       `,
     }),
   });
@@ -44,7 +44,6 @@ async function sendTelegramMessage(chatId: string, text: string) {
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
     }
   );
-  // Логируем ошибки Telegram чтобы видеть их в Vercel Logs
   if (!res.ok) {
     const err = await res.text();
     console.error("[Telegram] sendMessage failed:", err);
@@ -60,15 +59,13 @@ export async function POST(req: NextRequest) {
   const supabase = getServiceSupabase();
   const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
-  // ФИХ #1: ищем analyzed=false И analyzed=null (новые строки без дефолта)
-  // ФИХ #2: last_message_at=null тоже берём в обработку
   const { data: conversationsRaw, error } = await supabase
     .from("conversations")
     .select(
       "id, session_id, bot_id, bots(company_name, handoff_email, analysis_model, analysis_prompt, enable_analysis, telegram_enabled, telegram_chat_id)"
     )
-    .or("analyzed.eq.false,analyzed.is.null")          // ФИХ #1
-    .or(`last_message_at.lt.${cutoff},last_message_at.is.null`) // ФИХ #2
+    .or("analyzed.eq.false,analyzed.is.null")
+    .or(`last_message_at.lt.${cutoff},last_message_at.is.null`)
     .limit(10);
 
   if (error) {
@@ -86,11 +83,9 @@ export async function POST(req: NextRequest) {
   let processed = 0;
 
   for (const conv of conversations) {
-    // ФИХ #3: НЕ помечаем analyzed=true заранее — только после успешной обработки
     const bot =
       Array.isArray(conv.bots) ? conv.bots[0] ?? null : (conv.bots as any);
 
-    // Если анализ отключён — просто помечаем как обработанный и пропускаем
     if (!bot || bot.enable_analysis === false) {
       await supabase
         .from("conversations")
@@ -107,7 +102,6 @@ export async function POST(req: NextRequest) {
       .order("created_at", { ascending: true });
 
     if (!messages || messages.length < 2) {
-      // Слишком короткий диалог — помечаем чтобы не гонять повторно
       await supabase
         .from("conversations")
         .update({ analyzed: true, analyzed_at: new Date().toISOString() })
@@ -117,7 +111,7 @@ export async function POST(req: NextRequest) {
     }
 
     const dialog = messages
-      .map((m) => `${m.role === "user" ? "Клиент" : "Бот"}: ${m.content}`)
+      .map((m) => `${m.role === "user" ? "Client" : "Bot"}: ${m.content}`)
       .join("\n");
 
     console.log(`[Analyze] conv ${conv.id}: sending to LLM, dialog length=${dialog.length}`);
@@ -140,11 +134,11 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: "system",
-            content: `${analysisPrompt}\n\nОтвечай ТОЛЬКО валидным JSON без markdown и пояснений.`,
+            content: `${analysisPrompt}\n\nReturn ONLY valid JSON, no markdown, no explanation.`,
           },
           {
             role: "user",
-            content: `Проанализируй диалог:\n\n${dialog}`,
+            content: `Analyze this dialog:\n\n${dialog}`,
           },
         ],
       }),
@@ -153,7 +147,6 @@ export async function POST(req: NextRequest) {
     if (!llmRes.ok) {
       const errText = await llmRes.text();
       console.error(`[Analyze] conv ${conv.id}: LLM error ${llmRes.status}:`, errText);
-      // Не помечаем analyzed=true — попробуем в следующем cron-цикле
       continue;
     }
 
@@ -167,7 +160,6 @@ export async function POST(req: NextRequest) {
       parsed = JSON.parse(clean);
     } catch (e) {
       console.error(`[Analyze] conv ${conv.id}: JSON parse failed, raw was:`, raw);
-      // Помечаем analyzed чтобы не застрять в бесконечном цикле
       await supabase
         .from("conversations")
         .update({ analyzed: true, analyzed_at: new Date().toISOString() })
@@ -177,13 +169,20 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Analyze] conv ${conv.id}: parsed=`, parsed);
 
-    // Всегда помечаем как analyzed после успешного LLM-ответа
     await supabase
       .from("conversations")
       .update({ analyzed: true, analyzed_at: new Date().toISOString() })
       .eq("id", conv.id);
 
-    if (!parsed.has_contact) {
+    // ФИХ: создаём лид если есть хоть что-то — имя, телефон, email или мессенджер
+    const hasContact =
+      parsed.has_contact === true ||
+      !!parsed.phone ||
+      !!parsed.name ||
+      !!parsed.email ||
+      !!parsed.messenger;
+
+    if (!hasContact) {
       console.log(`[Analyze] conv ${conv.id}: no contact info, lead not created`);
       continue;
     }
@@ -194,7 +193,7 @@ export async function POST(req: NextRequest) {
       name: parsed.name || null,
       phone: parsed.phone || null,
       email: parsed.email || null,
-      note: parsed.note || parsed.summary || null,
+      note: (parsed.messenger ? `Messenger: ${parsed.messenger}\n` : "") + (parsed.note || parsed.summary || ""),
       status: "new",
     });
 
@@ -209,6 +208,7 @@ export async function POST(req: NextRequest) {
         name: parsed.name,
         phone: parsed.phone,
         email: parsed.email,
+        messenger: parsed.messenger,
         note: parsed.note || parsed.summary,
       });
       console.log(`[Analyze] conv ${conv.id}: email sent to ${bot.handoff_email}`);
@@ -218,10 +218,11 @@ export async function POST(req: NextRequest) {
       const msg = [
         `🔔 <b>New Lead — ${bot.company_name}</b>`,
         ``,
-        parsed.name ? `👤 <b>Name:</b> ${parsed.name}` : null,
-        parsed.phone ? `📞 <b>Phone:</b> ${parsed.phone}` : null,
-        parsed.email ? `📧 <b>Email:</b> ${parsed.email}` : null,
-        parsed.note ? `💬 <b>Note:</b> ${parsed.note}` : null,
+        parsed.name      ? `👤 <b>Name:</b> ${parsed.name}`           : null,
+        parsed.phone     ? `📞 <b>Phone:</b> ${parsed.phone}`         : null,
+        parsed.email     ? `📧 <b>Email:</b> ${parsed.email}`         : null,
+        parsed.messenger ? `💬 <b>Messenger:</b> ${parsed.messenger}` : null,
+        parsed.note      ? `📝 <b>Note:</b> ${parsed.note}`           : null,
       ]
         .filter(Boolean)
         .join("\n");

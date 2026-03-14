@@ -32,6 +32,20 @@ async function sendLeadEmail(
   });
 }
 
+async function sendTelegramMessage(chatId: string, text: string) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: "HTML"
+    })
+  });
+}
+
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-cron-secret");
   if (secret !== process.env.CRON_SECRET) {
@@ -43,7 +57,7 @@ export async function POST(req: NextRequest) {
 
   const { data: conversationsRaw, error } = await supabase
     .from("conversations")
-    .select("id, session_id, bot_id, bots(company_name, handoff_email, analysis_model, analysis_prompt, enable_analysis)")
+    .select("id, session_id, bot_id, bots(company_name, handoff_email, analysis_model, analysis_prompt, enable_analysis, telegram_enabled, telegram_chat_id)")
     .eq("analyzed", false)
     .lt("last_message_at", cutoff)
     .limit(10);
@@ -60,7 +74,6 @@ export async function POST(req: NextRequest) {
   let processed = 0;
 
   for (const conv of conversations) {
-    // Mark as analyzed immediately to avoid reprocessing
     await supabase
       .from("conversations")
       .update({ analyzed: true, analyzed_at: new Date().toISOString() })
@@ -68,7 +81,6 @@ export async function POST(req: NextRequest) {
 
     const bot = Array.isArray(conv.bots) ? conv.bots[0] ?? null : conv.bots as any;
 
-    // Skip if analysis disabled for this bot
     if (!bot || bot.enable_analysis === false) continue;
 
     const { data: messages } = await supabase
@@ -143,6 +155,19 @@ export async function POST(req: NextRequest) {
         email: parsed.email,
         note: parsed.note || parsed.summary
       });
+    }
+
+    if (bot.telegram_enabled && bot.telegram_chat_id) {
+      const msg = [
+        `🔔 <b>New Lead — ${bot.company_name}</b>`,
+        ``,
+        parsed.name  ? `👤 <b>Name:</b> ${parsed.name}` : null,
+        parsed.phone ? `📞 <b>Phone:</b> ${parsed.phone}` : null,
+        parsed.email ? `📧 <b>Email:</b> ${parsed.email}` : null,
+        parsed.note  ? `💬 <b>Note:</b> ${parsed.note}` : null,
+      ].filter(Boolean).join("\n");
+
+      await sendTelegramMessage(bot.telegram_chat_id, msg);
     }
 
     processed++;

@@ -25,6 +25,8 @@ async function createBot(formData: FormData) {
     error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
     auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
     badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
+    telegram_enabled: formData.get("telegram_enabled") === "on",
+    telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim() || null,
     enable_analysis: formData.get("enable_analysis") === "on",
     is_active: formData.get("is_active") === "on"
   });
@@ -54,6 +56,8 @@ async function updateBot(formData: FormData) {
     error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
     auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
     badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
+    telegram_enabled: formData.get("telegram_enabled") === "on",
+    telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim() || null,
     enable_analysis: formData.get("enable_analysis") === "on",
     is_active: formData.get("is_active") === "on",
     updated_at: new Date().toISOString()
@@ -155,6 +159,13 @@ export default async function AdminPage() {
                   <div>
                     <label className="text-xs text-slate-500">Сообщение в пузыре</label>
                     <input name="badge_message" defaultValue="👋 Hi! Need help? I can answer questions and book appointments." className="w-full rounded-md border p-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Telegram Chat ID</label>
+                    <input name="telegram_chat_id" placeholder="-1001234567890" className="w-full rounded-md border p-2 text-sm" />
+                  </div>
+                  <div className="flex items-end pb-1">
+                    <label className="flex items-center gap-2 text-sm"><input name="telegram_enabled" type="checkbox" /> Telegram уведомления</label>
                   </div>
                   <div className="col-span-2 flex gap-4 text-sm">
                     <label className="flex items-center gap-2"><input name="is_active" type="checkbox" defaultChecked /> Активен</label>
@@ -271,6 +282,13 @@ export default async function AdminPage() {
                             <div>
                               <label className="text-xs text-slate-500">Сообщение в пузыре</label>
                               <input name="badge_message" defaultValue={bot.badge_message ?? "👋 Hi! Need help? I can answer questions and book appointments."} className="w-full rounded-md border p-2 text-sm" />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500">Telegram Chat ID</label>
+                              <input name="telegram_chat_id" defaultValue={bot.telegram_chat_id ?? ""} placeholder="-1001234567890" className="w-full rounded-md border p-2 text-sm" />
+                            </div>
+                            <div className="flex items-end pb-1">
+                              <label className="flex items-center gap-2 text-sm"><input name="telegram_enabled" type="checkbox" defaultChecked={bot.telegram_enabled ?? false} /> Telegram уведомления</label>
                             </div>
                             <div className="col-span-2 flex gap-4 text-sm">
                               <label className="flex items-center gap-2"><input name="is_active" type="checkbox" defaultChecked={bot.is_active} /> Активен</label>

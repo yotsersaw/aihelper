@@ -21,9 +21,10 @@ async function createBot(formData: FormData) {
     handoff_email: String(formData.get("handoff_email") || "").trim() || null,
     monthly_token_limit: Number(formData.get("monthly_token_limit") || 200000),
     monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
-    welcome_message: String(formData.get("welcome_message") || "Привет! Чем могу помочь?").trim(),
-    error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
+    welcome_message: String(formData.get("welcome_message") || "Hi! How can I help you today?").trim(),
+    error_message: String(formData.get("error_message") || "Sorry, something went wrong. Please try again.").trim(),
     auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
+    chat_open_delay: Number(formData.get("chat_open_delay") ?? 5),
     badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
     telegram_enabled: formData.get("telegram_enabled") === "on",
     telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim() || null,
@@ -52,9 +53,10 @@ async function updateBot(formData: FormData) {
     handoff_email: String(formData.get("handoff_email") || "").trim() || null,
     monthly_token_limit: Number(formData.get("monthly_token_limit") || 200000),
     monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
-    welcome_message: String(formData.get("welcome_message") || "Привет! Чем могу помочь?").trim(),
-    error_message: String(formData.get("error_message") || "Извините, произошла ошибка. Попробуйте ещё раз.").trim(),
+    welcome_message: String(formData.get("welcome_message") || "Hi! How can I help you today?").trim(),
+    error_message: String(formData.get("error_message") || "Sorry, something went wrong. Please try again.").trim(),
     auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
+    chat_open_delay: Number(formData.get("chat_open_delay") ?? 5),
     badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
     telegram_enabled: formData.get("telegram_enabled") === "on",
     telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim() || null,
@@ -142,21 +144,25 @@ export default async function AdminPage() {
                   <input name="temperature" type="number" step="0.1" min="0" max="1" defaultValue="0.3" placeholder="Temperature" className="rounded-md border p-2 text-sm" />
                   <input name="max_completion_tokens" type="number" defaultValue="1000" placeholder="Max tokens" className="rounded-md border p-2 text-sm" />
                   <input name="monthly_cost_limit" type="number" step="0.01" defaultValue="50" placeholder="Лимит $ в месяц" className="rounded-md border p-2 text-sm" />
-                  <input name="welcome_message" defaultValue="Привет! Чем могу помочь?" placeholder="Приветствие" className="rounded-md border p-2 text-sm" />
-                  <input name="error_message" defaultValue="Извините, произошла ошибка. Попробуйте ещё раз." placeholder="Текст ошибки" className="rounded-md border p-2 text-sm" />
+                  <input name="welcome_message" defaultValue="Hi! How can I help you today?" placeholder="Приветствие" className="rounded-md border p-2 text-sm" />
+                  <input name="error_message" defaultValue="Sorry, something went wrong. Please try again." placeholder="Текст ошибки" className="rounded-md border p-2 text-sm" />
                   <div>
                     <label className="text-xs text-slate-500">Имя бота в чате</label>
-                    <input name="bot_name" defaultValue="AI Assistant" placeholder="Например: Алиса" className="w-full rounded-md border p-2 text-sm" />
+                    <input name="bot_name" defaultValue="AI Assistant" className="w-full rounded-md border p-2 text-sm" />
                   </div>
                   <div>
                     <label className="text-xs text-slate-500">Цвет виджета</label>
-                    <input name="widget_color" defaultValue="#2563eb" placeholder="#2563eb" className="w-full rounded-md border p-2 text-sm" />
+                    <input name="widget_color" defaultValue="#2563eb" className="w-full rounded-md border p-2 text-sm" />
                   </div>
                   <div>
                     <label className="text-xs text-slate-500">Задержка пузыря (сек, 0 = выкл)</label>
                     <input name="auto_open_delay" type="number" defaultValue="8" min="0" max="60" className="w-full rounded-md border p-2 text-sm" />
                   </div>
                   <div>
+                    <label className="text-xs text-slate-500">Задержка открытия чата (сек, 0 = выкл)</label>
+                    <input name="chat_open_delay" type="number" defaultValue="5" min="0" max="60" className="w-full rounded-md border p-2 text-sm" />
+                  </div>
+                  <div className="col-span-2">
                     <label className="text-xs text-slate-500">Сообщение в пузыре</label>
                     <input name="badge_message" defaultValue="👋 Hi! Need help? I can answer questions and book appointments." className="w-full rounded-md border p-2 text-sm" />
                   </div>
@@ -261,11 +267,11 @@ export default async function AdminPage() {
                             </div>
                             <div>
                               <label className="text-xs text-slate-500">Приветствие</label>
-                              <input name="welcome_message" defaultValue={bot.welcome_message ?? "Привет! Чем могу помочь?"} className="w-full rounded-md border p-2 text-sm" />
+                              <input name="welcome_message" defaultValue={bot.welcome_message ?? "Hi! How can I help you today?"} className="w-full rounded-md border p-2 text-sm" />
                             </div>
                             <div>
                               <label className="text-xs text-slate-500">Текст ошибки</label>
-                              <input name="error_message" defaultValue={bot.error_message ?? "Извините, произошла ошибка."} className="w-full rounded-md border p-2 text-sm" />
+                              <input name="error_message" defaultValue={bot.error_message ?? "Sorry, something went wrong. Please try again."} className="w-full rounded-md border p-2 text-sm" />
                             </div>
                             <div>
                               <label className="text-xs text-slate-500">Имя бота в чате</label>
@@ -280,6 +286,10 @@ export default async function AdminPage() {
                               <input name="auto_open_delay" type="number" min="0" max="60" defaultValue={bot.auto_open_delay ?? 8} className="w-full rounded-md border p-2 text-sm" />
                             </div>
                             <div>
+                              <label className="text-xs text-slate-500">Задержка открытия чата (сек, 0 = выкл)</label>
+                              <input name="chat_open_delay" type="number" min="0" max="60" defaultValue={bot.chat_open_delay ?? 5} className="w-full rounded-md border p-2 text-sm" />
+                            </div>
+                            <div className="col-span-2">
                               <label className="text-xs text-slate-500">Сообщение в пузыре</label>
                               <input name="badge_message" defaultValue={bot.badge_message ?? "👋 Hi! Need help? I can answer questions and book appointments."} className="w-full rounded-md border p-2 text-sm" />
                             </div>
@@ -312,7 +322,6 @@ export default async function AdminPage() {
                       </details>
                       <form action={deleteBot}>
                         <input type="hidden" name="id" value={bot.id} />
-                        <input type="hidden" name="confirm_name" value={bot.company_name} />
                         <button formAction={deleteBot} className="text-xs text-red-400 hover:text-red-600 px-2 py-1">Del</button>
                       </form>
                     </div>

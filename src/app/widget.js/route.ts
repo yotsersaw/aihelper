@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const botId = searchParams.get("botId");
 
   let autoOpenDelay = 8;
+  let chatOpenDelay = 5;
   let badgeMessage = "👋 Hi! Need help? I can answer questions and book appointments.";
   let widgetColor = "#2563eb";
 
@@ -15,11 +16,12 @@ export async function GET(request: Request) {
     const supabase = getServiceSupabase();
     const { data } = await supabase
       .from("bots")
-      .select("auto_open_delay, badge_message, widget_color")
+      .select("auto_open_delay, chat_open_delay, badge_message, widget_color")
       .eq("public_bot_id", botId)
       .single();
     if (data) {
       autoOpenDelay = data.auto_open_delay ?? 8;
+      chatOpenDelay = data.chat_open_delay ?? 5;
       badgeMessage = data.badge_message ?? badgeMessage;
       widgetColor = data.widget_color ?? widgetColor;
     }
@@ -31,10 +33,20 @@ export async function GET(request: Request) {
   if (!botId) return;
   var baseUrl = new URL(script.src).origin;
   var autoOpenDelay = ${autoOpenDelay * 1000};
+  var chatOpenDelay = ${chatOpenDelay * 1000};
   var badgeMessage = ${JSON.stringify(badgeMessage)};
   var widgetColor = ${JSON.stringify(widgetColor)};
   var opened = false;
   var userClosedManually = false;
+
+  // Проверяем есть ли уже сессия (был ли разговор раньше)
+  var sessionKey = 'chat_session_' + botId;
+  var hasExistingSession = false;
+  try {
+    hasExistingSession = !!localStorage.getItem(sessionKey);
+  } catch(e) {
+    try { hasExistingSession = !!sessionStorage.getItem(sessionKey); } catch(e2) {}
+  }
 
   var style = document.createElement('style');
   style.textContent = \`
@@ -179,17 +191,20 @@ export async function GET(request: Request) {
     }, 1500);
   }
 
-  if (autoOpenDelay > 0) {
+  // Автооткрытие только для новых посетителей без истории
+  if (autoOpenDelay > 0 && !hasExistingSession) {
     setTimeout(function(){
       if (!opened && !userClosedManually) {
-        // Сначала показываем badge с typing
+        // Показываем badge
         showBadge(badgeMessage);
-        // Через 3 секунды после badge — открываем чат
-        setTimeout(function(){
-          if (!opened && !userClosedManually) {
-            openChat();
-          }
-        }, 3000);
+        // Через chatOpenDelay открываем чат (если 0 — не открываем)
+        if (chatOpenDelay > 0) {
+          setTimeout(function(){
+            if (!opened && !userClosedManually) {
+              openChat();
+            }
+          }, chatOpenDelay);
+        }
       }
     }, autoOpenDelay);
   }

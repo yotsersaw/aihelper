@@ -37,8 +37,8 @@ function getOrCreateSessionId(botId: string): string {
 export function ChatWidget({
   botId,
   embedded = false,
-  welcomeMessage = "Привет! Чем могу помочь?",
-  errorMessage = "Извините, произошла ошибка. Попробуйте ещё раз.",
+  welcomeMessage = "Hi! How can I help you today?",
+  errorMessage = "Sorry, something went wrong. Please try again.",
   botName = "AI Assistant",
   widgetColor = "#2563eb"
 }: Props) {
@@ -46,6 +46,8 @@ export function ChatWidget({
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
+  // Показываем typing animation перед первым сообщением бота
+  const [showWelcomeTyping, setShowWelcomeTyping] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -62,21 +64,31 @@ export function ChatWidget({
         if (res.ok) {
           const data = await res.json();
           if (data.messages?.length > 0) {
+            // Есть история — показываем её, без приветствия
             setMessages(data.messages);
+            setHistoryLoading(false);
+          } else {
+            // Нет истории — показываем typing потом приветствие
+            setHistoryLoading(false);
+            setShowWelcomeTyping(true);
+            setTimeout(function() {
+              setShowWelcomeTyping(false);
+              setMessages([{ role: "assistant", content: welcomeMessage }]);
+            }, 1500);
           }
+        } else {
+          setHistoryLoading(false);
         }
       } catch {
-        // silently fail
-      } finally {
         setHistoryLoading(false);
       }
     }
     loadHistory();
-  }, [botId, sessionId]);
+  }, [botId, sessionId, welcomeMessage]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, showWelcomeTyping]);
 
   useEffect(() => {
     if (!loading && !historyLoading) {
@@ -145,33 +157,35 @@ export function ChatWidget({
               <span className="animate-bounce [animation-delay:0.2s]">.</span>
             </span>
           </div>
-        ) : messages.length === 0 ? (
-          <p className="text-slate-400 text-center mt-8">{welcomeMessage}</p>
         ) : (
-          messages.map((msg, i) => (
-            <div key={i} className={msg.role === "assistant" ? "flex justify-start" : "flex justify-end"}>
-              <div
-                className={msg.role === "assistant"
-                  ? "max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800"
-                  : "max-w-[80%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-white"
-                }
-                style={msg.role === "user" ? { backgroundColor: widgetColor } : {}}
-              >
-                {msg.content}
+          <>
+            {messages.map((msg, i) => (
+              <div key={i} className={msg.role === "assistant" ? "flex justify-start" : "flex justify-end"}>
+                <div
+                  className={msg.role === "assistant"
+                    ? "max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800"
+                    : "max-w-[80%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-white"
+                  }
+                  style={msg.role === "user" ? { backgroundColor: widgetColor } : {}}
+                >
+                  {msg.content}
+                </div>
               </div>
-            </div>
-          ))
-        )}
-        {loading && (
-          <div className="flex justify-start">
-            <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-400">
-              <span className="inline-flex gap-1">
-                <span className="animate-bounce">.</span>
-                <span className="animate-bounce [animation-delay:0.1s]">.</span>
-                <span className="animate-bounce [animation-delay:0.2s]">.</span>
-              </span>
-            </div>
-          </div>
+            ))}
+
+            {/* Typing animation — приветствие или ответ бота */}
+            {(showWelcomeTyping || loading) && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-400">
+                  <span className="inline-flex gap-1">
+                    <span className="animate-bounce">.</span>
+                    <span className="animate-bounce [animation-delay:0.1s]">.</span>
+                    <span className="animate-bounce [animation-delay:0.2s]">.</span>
+                  </span>
+                </div>
+              </div>
+            )}
+          </>
         )}
         <div ref={bottomRef} />
       </div>
@@ -183,7 +197,7 @@ export function ChatWidget({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Напишите сообщение..."
+          placeholder="Type a message..."
           className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm outline-none focus:bg-white transition"
           style={{ borderColor: text ? widgetColor : undefined }}
           disabled={loading || historyLoading}

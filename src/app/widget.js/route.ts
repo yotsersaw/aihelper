@@ -34,6 +34,7 @@ export async function GET(request: Request) {
   var badgeMessage = ${JSON.stringify(badgeMessage)};
   var widgetColor = ${JSON.stringify(widgetColor)};
   var opened = false;
+  var userClosedManually = false;
 
   var style = document.createElement('style');
   style.textContent = \`
@@ -158,6 +159,7 @@ export async function GET(request: Request) {
 
   function closeChat() {
     opened = false;
+    userClosedManually = true;
     frame.classList.remove('visible');
     button.innerHTML = chatIcon;
     setTimeout(function(){ frame.classList.remove('open'); }, 250);
@@ -179,12 +181,25 @@ export async function GET(request: Request) {
 
   if (autoOpenDelay > 0) {
     setTimeout(function(){
-      if (!opened) showBadge(badgeMessage);
+      if (!opened && !userClosedManually) {
+        // Сначала показываем badge с typing
+        showBadge(badgeMessage);
+        // Через 3 секунды после badge — открываем чат
+        setTimeout(function(){
+          if (!opened && !userClosedManually) {
+            openChat();
+          }
+        }, 3000);
+      }
     }, autoOpenDelay);
   }
 
   badge.addEventListener('click', function(e){
-    if (e.target.id === 'selvanto-badge-close') { badge.style.display = 'none'; return; }
+    if (e.target.id === 'selvanto-badge-close') {
+      badge.style.display = 'none';
+      userClosedManually = true;
+      return;
+    }
     openChat();
   });
 

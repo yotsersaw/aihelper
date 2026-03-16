@@ -1,6 +1,8 @@
 import { ChatWidget } from "@/components/chat-widget";
 import { getServiceSupabase } from "@/lib/supabase";
 
+export const dynamic = "force-dynamic";
+
 export default async function WidgetFramePage({ params }: { params: { botId: string } }) {
   const supabase = getServiceSupabase();
   const { data: bot } = await supabase

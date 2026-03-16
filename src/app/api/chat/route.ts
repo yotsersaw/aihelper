@@ -11,19 +11,42 @@ const schema = z.object({
   pageUrl: z.string().url().optional()
 });
 
-// Keep only last N messages to prevent context overflow
 const HISTORY_WINDOW = 20;
 
-// Fallback message when all models are down
 const ALL_MODELS_FAILED =
   "I'm having technical difficulties right now. Please leave your phone number or email and we'll get back to you shortly!";
+
+function extractReply(data: any): string {
+  const raw =
+    data?.choices?.[0]?.message?.content ??
+    data?.choices?.[0]?.text ??
+    "";
+
+  if (typeof raw === "string") {
+    return raw.trim();
+  }
+
+  if (Array.isArray(raw)) {
+    return raw
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part?.type === "text" && typeof part.text === "string") return part.text;
+        if (typeof part?.text === "string") return part.text;
+        return "";
+      })
+      .join("")
+      .trim();
+  }
+
+  return "";
+}
 
 async function callOpenRouter(
   model: string,
   messages: any[],
   temperature: number,
   maxTokens: number
-): Promise<{ ok: boolean; data?: any; error?: string }> {
+): Promise<{ ok: boolean; data?: any; reply?: string; error?: string }> {
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -41,14 +64,37 @@ async function callOpenRouter(
       })
     });
 
+    const rawText = await res.text();
+
     if (!res.ok) {
-      const txt = await res.text();
-      console.error(`[Chat] Model ${model} failed: ${res.status} ${txt}`);
-      return { ok: false, error: txt };
+      console.error(`[Chat] Model ${model} failed: ${res.status} ${rawText}`);
+      return { ok: false, error: rawText };
     }
 
-    const data = await res.json();
-    return { ok: true, data };
+    let data: any;
+    try {
+      data = JSON.parse(rawText);
+    } catch (e) {
+      console.error(`[Chat] Model ${model} returned invalid JSON:`, rawText);
+      return { ok: false, error: "Invalid JSON from OpenRouter" };
+    }
+
+    if (data?.error) {
+      console.error(`[Chat] Model ${model} returned API error:`, data.error);
+      return {
+        ok: false,
+        error: typeof data.error === "string" ? data.error : JSON.stringify(data.error)
+      };
+    }
+
+    const reply = extractReply(data);
+
+    if (!reply) {
+      console.error(`[Chat] Model ${model} returned empty reply:`, rawText);
+      return { ok: false, error: "Empty reply from model" };
+    }
+
+    return { ok: true, data, reply };
   } catch (e) {
     console.error(`[Chat] Model ${model} exception:`, e);
     return { ok: false, error: String(e) };
@@ -85,7 +131,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Origin not allowed" }, { status: 403 });
     }
 
-    // Monthly limit check
     const monthStart = new Date();
     monthStart.setUTCDate(1);
     monthStart.setUTCHours(0, 0, 0, 0);
@@ -102,7 +147,6 @@ export async function POST(req: NextRequest) {
       usedTokens >= bot.monthly_token_limit ||
       usedCost >= Number(bot.monthly_cost_limit);
 
-    // Upsert conversation
     const { data: conversation } = await supabase
       .from("conversations")
       .upsert(
@@ -121,7 +165,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Conversation error" }, { status: 500 });
     }
 
-    // Save user message
     await supabase.from("messages").insert({
       conversation_id: conversation.id,
       role: "user",
@@ -142,7 +185,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ reply: fallback, limited: true });
     }
 
-    // Get last N messages only (sliding window)
     const { data: history } = await supabase
       .from("messages")
       .select("role, content")
@@ -150,10 +192,8 @@ export async function POST(req: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(HISTORY_WINDOW);
 
-    // Reverse to chronological order
     const messages = (history || []).reverse();
 
-    // Current date for the bot to know today's date
     const today = new Date().toLocaleDateString("ru-RU", {
       weekday: "long",
       year: "numeric",
@@ -168,18 +208,22 @@ export async function POST(req: NextRequest) {
       ...messages.map((m) => ({ role: m.role, content: m.content }))
     ];
 
-    // Parse models — поддерживаем несколько через запятую
-    const models = (bot.model as string)
+    const models = String(bot.model || "")
       .split(",")
       .map((m) => m.trim())
       .filter(Boolean);
 
-    // Пробуем каждую модель по очереди
+    if (models.length === 0) {
+      return NextResponse.json({ error: "No chat models configured" }, { status: 500 });
+    }
+
     let llmData: any = null;
+    let reply = "";
     let usedModel = models[0];
 
     for (const model of models) {
       console.log(`[Chat] Trying model: ${model}`);
+
       const result = await callOpenRouter(
         model,
         openrouterMessages,
@@ -187,40 +231,37 @@ export async function POST(req: NextRequest) {
         bot.max_completion_tokens
       );
 
-      if (result.ok && result.data) {
+      if (result.ok && result.data && result.reply) {
         llmData = result.data;
+        reply = result.reply;
         usedModel = model;
         console.log(`[Chat] Model ${model} succeeded`);
         break;
       }
 
-      console.warn(`[Chat] Model ${model} failed, trying next...`);
+      console.warn(`[Chat] Model ${model} failed, trying next...`, result.error);
     }
 
-    // Все модели упали — отвечаем вежливым сообщением с просьбой оставить контакт
-    if (!llmData) {
+    if (!llmData || !reply) {
       console.error(`[Chat] All models failed for bot ${bot.id}`);
+      const fallback = ALL_MODELS_FAILED;
+
       await supabase.from("messages").insert({
         conversation_id: conversation.id,
         role: "assistant",
-        content: ALL_MODELS_FAILED,
+        content: fallback,
         token_count: 0,
         cost: 0
       });
-      return NextResponse.json({ reply: ALL_MODELS_FAILED, limited: false });
-    }
 
-    const reply =
-      llmData.choices?.[0]?.message?.content?.trim() ||
-      llmData.choices?.[0]?.text?.trim() ||
-      "Sorry, I couldn't generate a response.";
+      return NextResponse.json({ reply: fallback, limited: false });
+    }
 
     const promptTokens = llmData.usage?.prompt_tokens ?? 0;
     const completionTokens = llmData.usage?.completion_tokens ?? 0;
     const totalTokens = llmData.usage?.total_tokens ?? promptTokens + completionTokens;
     const cost = estimateCost(totalTokens, usedModel);
 
-    // Save assistant message
     await supabase.from("messages").insert({
       conversation_id: conversation.id,
       role: "assistant",
@@ -229,7 +270,6 @@ export async function POST(req: NextRequest) {
       cost
     });
 
-    // Update daily usage
     const todayDate = new Date().toISOString().slice(0, 10);
     await supabase.rpc("upsert_usage_daily", {
       p_bot_id: bot.id,

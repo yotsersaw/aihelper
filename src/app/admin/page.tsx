@@ -20,6 +20,7 @@ function isExpired(value: string | null | undefined) {
 
 async function createBot(formData: FormData) {
   "use server";
+
   const supabase = getServiceSupabase();
 
   await supabase.from("bots").insert({
@@ -40,7 +41,7 @@ async function createBot(formData: FormData) {
     monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
     tariff: String(formData.get("tariff") || "trial").trim(),
     paid_until: normalizePaidUntil(formData.get("paid_until")),
-    monthly_message_limit: Number(formData.get("monthly_message_limit") || 1000),
+    monthly_conversation_limit: Number(formData.get("monthly_conversation_limit") || 500),
     welcome_message: String(formData.get("welcome_message") || "Hi! How can I help you today?").trim(),
     error_message: String(formData.get("error_message") || "Sorry, something went wrong. Please try again.").trim(),
     auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
@@ -57,6 +58,7 @@ async function createBot(formData: FormData) {
 
 async function updateBot(formData: FormData) {
   "use server";
+
   const supabase = getServiceSupabase();
   const id = String(formData.get("id"));
 
@@ -77,7 +79,7 @@ async function updateBot(formData: FormData) {
     monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
     tariff: String(formData.get("tariff") || "trial").trim(),
     paid_until: normalizePaidUntil(formData.get("paid_until")),
-    monthly_message_limit: Number(formData.get("monthly_message_limit") || 1000),
+    monthly_conversation_limit: Number(formData.get("monthly_conversation_limit") || 500),
     welcome_message: String(formData.get("welcome_message") || "Hi! How can I help you today?").trim(),
     error_message: String(formData.get("error_message") || "Sorry, something went wrong. Please try again.").trim(),
     auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
@@ -95,6 +97,7 @@ async function updateBot(formData: FormData) {
 
 async function deleteBot(formData: FormData) {
   "use server";
+
   const supabase = getServiceSupabase();
   const id = String(formData.get("id"));
 
@@ -109,7 +112,13 @@ export default async function AdminPage() {
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
 
-  const [{ data: botsData }, { data: usageData }, { data: conversationsData }, { data: messagesData }] = await Promise.all([
+  const [
+    { data: botsData },
+    { data: usageData },
+    { data: allConversationsData },
+    { data: monthlyConversationsData },
+    { data: monthlyMessagesData }
+  ] = await Promise.all([
     supabase.from("bots").select("*").order("created_at", { ascending: false }),
     supabase
       .from("usage_daily")
@@ -117,6 +126,7 @@ export default async function AdminPage() {
       .gte("usage_date", monthStart.toISOString().slice(0, 10))
       .order("usage_date", { ascending: false }),
     supabase.from("conversations").select("id, bot_id"),
+    supabase.from("conversations").select("bot_id").gte("created_at", monthStart.toISOString()),
     supabase
       .from("messages")
       .select("conversation_id")
@@ -126,24 +136,34 @@ export default async function AdminPage() {
 
   const bots = botsData ?? [];
   const usage = usageData ?? [];
-  const conversations = conversationsData ?? [];
-  const messages = messagesData ?? [];
+  const allConversations = allConversationsData ?? [];
+  const monthlyConversations = monthlyConversationsData ?? [];
+  const monthlyMessages = monthlyMessagesData ?? [];
 
   const totalCost = usage.reduce((sum, row) => sum + Number(row.total_cost || 0), 0);
   const totalTokens = usage.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0);
 
   const conversationToBotId = new Map<string, string>();
-  for (const conversation of conversations) {
+  for (const conversation of allConversations) {
     conversationToBotId.set(conversation.id, conversation.bot_id);
   }
 
+  const conversationCountByBotId = new Map<string, number>();
+  for (const conversation of monthlyConversations) {
+    conversationCountByBotId.set(
+      conversation.bot_id,
+      (conversationCountByBotId.get(conversation.bot_id) || 0) + 1
+    );
+  }
+
   const messageCountByBotId = new Map<string, number>();
-  for (const message of messages) {
+  for (const message of monthlyMessages) {
     const botId = conversationToBotId.get(message.conversation_id);
     if (!botId) continue;
     messageCountByBotId.set(botId, (messageCountByBotId.get(botId) || 0) + 1);
   }
 
+  const totalMonthlyConversations = Array.from(conversationCountByBotId.values()).reduce((sum, count) => sum + count, 0);
   const totalMonthlyMessages = Array.from(messageCountByBotId.values()).reduce((sum, count) => sum + count, 0);
 
   return (
@@ -160,10 +180,14 @@ export default async function AdminPage() {
       </nav>
 
       <div className="mx-auto max-w-7xl px-6 py-8 space-y-8">
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-5 gap-4">
           <div className="bg-white rounded-xl border p-4">
             <p className="text-xs text-slate-500">Всего ботов</p>
             <p className="text-2xl font-bold">{bots.length}</p>
+          </div>
+          <div className="bg-white rounded-xl border p-4">
+            <p className="text-xs text-slate-500">Разговоров за месяц</p>
+            <p className="text-2xl font-bold">{totalMonthlyConversations.toLocaleString()}</p>
           </div>
           <div className="bg-white rounded-xl border p-4">
             <p className="text-xs text-slate-500">Сообщений за месяц</p>
@@ -182,10 +206,12 @@ export default async function AdminPage() {
         <section className="bg-white rounded-xl border">
           <div className="flex items-center justify-between px-5 py-4 border-b">
             <h2 className="font-semibold">Боты</h2>
+
             <details className="relative">
               <summary className="cursor-pointer rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white list-none">
                 + Создать бота
               </summary>
+
               <div className="absolute right-0 top-10 z-50 w-[760px] rounded-xl border bg-white shadow-xl p-5">
                 <h3 className="font-semibold mb-3">Новый бот</h3>
 
@@ -213,14 +239,14 @@ export default async function AdminPage() {
                     <input name="paid_until" type="date" className="w-full rounded-md border p-2 text-sm" />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-500">Лимит сообщений / месяц</label>
-                    <input name="monthly_message_limit" type="number" defaultValue="1000" min="1" className="w-full rounded-md border p-2 text-sm" />
+                    <label className="text-xs text-slate-500">Лимит разговоров / месяц</label>
+                    <input name="monthly_conversation_limit" type="number" defaultValue="500" min="1" className="w-full rounded-md border p-2 text-sm" />
                   </div>
 
                   <input name="temperature" type="number" step="0.1" min="0" max="1" defaultValue="0.3" placeholder="Temperature" className="rounded-md border p-2 text-sm" />
                   <input name="max_completion_tokens" type="number" defaultValue="1000" placeholder="Max tokens" className="rounded-md border p-2 text-sm" />
 
-                  <input name="monthly_token_limit" type="number" defaultValue="200000" placeholder="Лимит токенов в месяц" className="rounded-md border p-2 text-sm" />
+                  <input name="monthly_token_limit" type="number" defaultValue="200000" placeholder="Лимит токенов / месяц" className="rounded-md border p-2 text-sm" />
                   <input name="monthly_cost_limit" type="number" step="0.01" defaultValue="50" placeholder="Лимит $ в месяц" className="rounded-md border p-2 text-sm" />
 
                   <input name="welcome_message" defaultValue="Hi! How can I help you today?" placeholder="Приветствие" className="rounded-md border p-2 text-sm" />
@@ -301,6 +327,7 @@ export default async function AdminPage() {
                 <th className="text-left px-4 py-2">Компания</th>
                 <th className="text-left px-4 py-2">Тариф</th>
                 <th className="text-left px-4 py-2">Оплачен до</th>
+                <th className="text-left px-4 py-2">Разговоры</th>
                 <th className="text-left px-4 py-2">Сообщения</th>
                 <th className="text-left px-4 py-2">Модель</th>
                 <th className="text-left px-4 py-2">Анализ</th>
@@ -310,8 +337,9 @@ export default async function AdminPage() {
 
             <tbody className="divide-y divide-slate-100">
               {bots.map((bot) => {
+                const usedConversations = conversationCountByBotId.get(bot.id) || 0;
                 const usedMessages = messageCountByBotId.get(bot.id) || 0;
-                const messageLimit = Number(bot.monthly_message_limit || 0);
+                const conversationLimit = Number(bot.monthly_conversation_limit || 0);
                 const expired = isExpired(bot.paid_until);
 
                 return (
@@ -338,7 +366,13 @@ export default async function AdminPage() {
 
                     <td className="px-4 py-3">
                       <span className="text-xs text-slate-700">
-                        {usedMessages} / {messageLimit || "—"}
+                        {usedConversations} / {conversationLimit || "—"}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="text-xs text-slate-700">
+                        {usedMessages}
                       </span>
                     </td>
 
@@ -426,12 +460,12 @@ export default async function AdminPage() {
                               </div>
 
                               <div>
-                                <label className="text-xs text-slate-500">Лимит сообщений / месяц</label>
+                                <label className="text-xs text-slate-500">Лимит разговоров / месяц</label>
                                 <input
-                                  name="monthly_message_limit"
+                                  name="monthly_conversation_limit"
                                   type="number"
                                   min="1"
-                                  defaultValue={bot.monthly_message_limit ?? 1000}
+                                  defaultValue={bot.monthly_conversation_limit ?? 500}
                                   className="w-full rounded-md border p-2 text-sm"
                                 />
                               </div>

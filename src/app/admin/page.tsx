@@ -18,6 +18,12 @@ function isExpired(value: string | null | undefined) {
   return new Date(value).getTime() < Date.now();
 }
 
+function daysUntil(value: string | null | undefined) {
+  if (!value) return null;
+  const diff = new Date(value).getTime() - Date.now();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
 async function createBot(formData: FormData) {
   "use server";
 
@@ -341,11 +347,48 @@ export default async function AdminPage() {
                 const usedMessages = messageCountByBotId.get(bot.id) || 0;
                 const conversationLimit = Number(bot.monthly_conversation_limit || 0);
                 const expired = isExpired(bot.paid_until);
+                const daysLeft = daysUntil(bot.paid_until);
+                const expiringSoon = !expired && daysLeft !== null && daysLeft <= 3;
+                const limitReached = conversationLimit > 0 && usedConversations >= conversationLimit;
+                const nearLimit =
+                  conversationLimit > 0 &&
+                  !limitReached &&
+                  usedConversations / conversationLimit >= 0.8;
+
+                const rowClass =
+                  !bot.is_active || expired || limitReached
+                    ? "bg-red-50/60 hover:bg-red-50"
+                    : expiringSoon || nearLimit
+                      ? "bg-amber-50/60 hover:bg-amber-50"
+                      : "hover:bg-slate-50";
+
+                const statusDotClass =
+                  !bot.is_active || expired || limitReached
+                    ? "bg-red-500"
+                    : expiringSoon || nearLimit
+                      ? "bg-amber-500"
+                      : "bg-emerald-400";
+
+                const statusText =
+                  !bot.is_active
+                    ? "выкл"
+                    : expired
+                      ? "просрочен"
+                      : limitReached
+                        ? "лимит"
+                        : expiringSoon
+                          ? "скоро"
+                          : nearLimit
+                            ? "почти"
+                            : "ok";
 
                 return (
-                  <tr key={bot.id} className="hover:bg-slate-50">
+                  <tr key={bot.id} className={rowClass}>
                     <td className="px-4 py-3">
-                      <span className={`inline-block h-2 w-2 rounded-full ${bot.is_active ? "bg-emerald-400" : "bg-slate-300"}`} />
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotClass}`} />
+                        <span className="text-xs text-slate-600">{statusText}</span>
+                      </div>
                     </td>
 
                     <td className="px-4 py-3 font-mono text-xs text-slate-600">{bot.public_bot_id}</td>
@@ -359,21 +402,35 @@ export default async function AdminPage() {
                     </td>
 
                     <td className="px-4 py-3">
-                      <span className={`text-xs ${expired ? "text-red-600 font-medium" : "text-slate-600"}`}>
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-xs ${
+                          expired
+                            ? "bg-red-100 text-red-700"
+                            : expiringSoon
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-slate-100 text-slate-700"
+                        }`}
+                      >
                         {formatPaidUntil(bot.paid_until)}
                       </span>
                     </td>
 
                     <td className="px-4 py-3">
-                      <span className="text-xs text-slate-700">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-xs ${
+                          limitReached
+                            ? "bg-red-100 text-red-700"
+                            : nearLimit
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-slate-100 text-slate-700"
+                        }`}
+                      >
                         {usedConversations} / {conversationLimit || "—"}
                       </span>
                     </td>
 
                     <td className="px-4 py-3">
-                      <span className="text-xs text-slate-700">
-                        {usedMessages}
-                      </span>
+                      <span className="text-xs text-slate-700">{usedMessages}</span>
                     </td>
 
                     <td className="px-4 py-3 text-xs text-slate-500 max-w-[220px] break-words">{bot.model}</td>

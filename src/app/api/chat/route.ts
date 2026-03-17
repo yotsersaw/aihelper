@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { estimateCost, fallbackMessage, isOriginAllowed } from "@/lib/chat";
+import { estimateCost, isOriginAllowed } from "@/lib/chat";
 import { env } from "@/lib/env";
 import { getServiceSupabase } from "@/lib/supabase";
 
@@ -15,6 +15,12 @@ const HISTORY_WINDOW = 20;
 
 const ALL_MODELS_FAILED =
   "I'm having technical difficulties right now. Please leave your phone number or email and we'll get back to you shortly!";
+
+const PAYMENT_EXPIRED_MESSAGE =
+  "This assistant is temporarily unavailable. Please leave your phone number or email and we will contact you shortly.";
+
+const CONVERSATION_LIMIT_MESSAGE =
+  "This assistant has reached its monthly limit. Please leave your phone number or email and we will contact you shortly!";
 
 function extractReply(data: any): string {
   const raw =
@@ -74,7 +80,7 @@ async function callOpenRouter(
     let data: any;
     try {
       data = JSON.parse(rawText);
-    } catch (e) {
+    } catch {
       console.error(`[Chat] Model ${model} returned invalid JSON:`, rawText);
       return { ok: false, error: "Invalid JSON from OpenRouter" };
     }
@@ -135,17 +141,66 @@ export async function POST(req: NextRequest) {
     monthStart.setUTCDate(1);
     monthStart.setUTCHours(0, 0, 0, 0);
 
-    const { data: usageRows } = await supabase
-      .from("usage_daily")
-      .select("total_tokens, total_cost")
-      .eq("bot_id", bot.id)
-      .gte("usage_date", monthStart.toISOString().slice(0, 10));
+    const paymentExpired =
+      !!bot.paid_until && new Date(bot.paid_until).getTime() < Date.now();
 
-    const usedTokens = usageRows?.reduce((s, r) => s + r.total_tokens, 0) ?? 0;
-    const usedCost = usageRows?.reduce((s, r) => s + Number(r.total_cost), 0) ?? 0;
-    const hitLimit =
-      usedTokens >= bot.monthly_token_limit ||
-      usedCost >= Number(bot.monthly_cost_limit);
+    const { data: existingConversation } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("bot_id", bot.id)
+      .eq("session_id", payload.sessionId)
+      .maybeSingle();
+
+    if (paymentExpired) {
+      if (existingConversation?.id) {
+        await supabase.from("messages").insert([
+          {
+            conversation_id: existingConversation.id,
+            role: "user",
+            content: payload.message,
+            token_count: 0,
+            cost: 0
+          },
+          {
+            conversation_id: existingConversation.id,
+            role: "assistant",
+            content: PAYMENT_EXPIRED_MESSAGE,
+            token_count: 0,
+            cost: 0
+          }
+        ]);
+
+        await supabase
+          .from("conversations")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", existingConversation.id);
+      }
+
+      return NextResponse.json({
+        reply: PAYMENT_EXPIRED_MESSAGE,
+        limited: true,
+        reason: "payment_expired"
+      });
+    }
+
+    if (!existingConversation) {
+      const { count: monthlyConversationCount } = await supabase
+        .from("conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("bot_id", bot.id)
+        .gte("created_at", monthStart.toISOString());
+
+      const hitConversationLimit =
+        (monthlyConversationCount || 0) >= Number(bot.monthly_conversation_limit || 0);
+
+      if (hitConversationLimit) {
+        return NextResponse.json({
+          reply: CONVERSATION_LIMIT_MESSAGE,
+          limited: true,
+          reason: "conversation_limit"
+        });
+      }
+    }
 
     const { data: conversation } = await supabase
       .from("conversations")
@@ -172,18 +227,6 @@ export async function POST(req: NextRequest) {
       token_count: 0,
       cost: 0
     });
-
-    if (hitLimit) {
-      const fallback = fallbackMessage();
-      await supabase.from("messages").insert({
-        conversation_id: conversation.id,
-        role: "assistant",
-        content: fallback,
-        token_count: 0,
-        cost: 0
-      });
-      return NextResponse.json({ reply: fallback, limited: true });
-    }
 
     const { data: history } = await supabase
       .from("messages")
@@ -271,6 +314,7 @@ export async function POST(req: NextRequest) {
     });
 
     const todayDate = new Date().toISOString().slice(0, 10);
+
     await supabase.rpc("upsert_usage_daily", {
       p_bot_id: bot.id,
       p_usage_date: todayDate,

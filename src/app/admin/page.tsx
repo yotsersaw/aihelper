@@ -855,7 +855,7 @@ export default async function AdminPage({
                             <div className="col-span-2">
                               <label className="text-xs text-slate-500">Embed код</label>
                               <code className="block bg-slate-50 rounded p-2 text-xs break-all">
-                                {`<script src="https://aihelper-mauve.vercel.app/widget.js?botId=${bot.public_bot_id}" data-bot-id="${bot.public_bot_id}"></script>`}
+                                {`<script src="https://app.selvanto.com/widget.js?botId=${bot.public_bot_id}" data-bot-id="${bot.public_bot_id}"></script>`}
                               </code>
                             </div>
 

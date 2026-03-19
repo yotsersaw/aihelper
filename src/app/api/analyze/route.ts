@@ -71,7 +71,7 @@ async function sendLeadEmail(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "AI Assistant <onboarding@resend.dev>",
+      from: "Selvanto <hello@mg.selvanto.com>",
       to,
       subject: `New Lead — ${companyName}`,
       html: `

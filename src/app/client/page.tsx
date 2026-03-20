@@ -21,6 +21,18 @@ function isExpired(value?: string | null) {
   return new Date(value).getTime() < Date.now();
 }
 
+function getStatusTone(statusText: string) {
+  if (statusText === "Active") {
+    return "border-emerald-400/30 bg-emerald-500/10 text-emerald-300";
+  }
+
+  if (statusText === "Expired") {
+    return "border-amber-400/30 bg-amber-500/10 text-amber-300";
+  }
+
+  return "border-white/10 bg-white/5 text-slate-300";
+}
+
 export default async function ClientPage() {
   const session = getClientSession();
 
@@ -55,8 +67,8 @@ export default async function ClientPage() {
 
   if (!bot) {
     return (
-      <main className="mx-auto max-w-5xl px-6 py-10">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">
+      <main className="min-h-screen bg-[#07111f] px-6 py-10 text-white">
+        <div className="mx-auto max-w-5xl rounded-[28px] border border-red-400/20 bg-red-500/10 p-6 text-red-200 backdrop-blur">
           Bot not found
         </div>
       </main>
@@ -66,114 +78,153 @@ export default async function ClientPage() {
   const conversations = conversationRows ?? [];
   const expired = isExpired(bot.paid_until);
   const statusText = !bot.is_active ? "Inactive" : expired ? "Expired" : "Active";
+  const statusTone = getStatusTone(statusText);
   const embedCode = `<script async src="https://app.selvanto.com/widget.js?botId=${bot.public_bot_id}"></script>`;
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <div>
-            <p className="text-sm text-slate-500">Client dashboard</p>
-            <h1 className="text-3xl font-semibold text-slate-900">
-              {bot.company_name || "Your bot"}
-            </h1>
-            <p className="mt-2 text-sm text-slate-600">
-              Bot ID: <span className="font-medium">{bot.public_bot_id}</span>
-            </p>
-          </div>
+    <main className="min-h-screen bg-[#07111f] text-white">
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute left-[-120px] top-[-120px] h-[320px] w-[320px] rounded-full bg-cyan-500/10 blur-3xl" />
+        <div className="absolute right-[-140px] top-[80px] h-[340px] w-[340px] rounded-full bg-fuchsia-500/10 blur-3xl" />
+        <div className="absolute bottom-[-120px] left-[20%] h-[280px] w-[280px] rounded-full bg-emerald-500/10 blur-3xl" />
+      </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm">
-            <div className="text-slate-500">Login</div>
-            <div className="mt-1 font-medium text-slate-900">{session.email}</div>
+      <div className="relative mx-auto max-w-7xl px-6 py-8 md:px-8 md:py-10">
+        <div className="rounded-[32px] border border-white/10 bg-white/[0.04] p-6 shadow-2xl shadow-black/30 backdrop-blur-xl md:p-8">
+          <div className="flex flex-col gap-6 border-b border-white/10 pb-6 md:flex-row md:items-start md:justify-between">
+            <div className="max-w-3xl">
+              <div className="inline-flex items-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-cyan-200">
+                Client dashboard
+              </div>
 
-            <form action="/api/client/logout" method="post" className="mt-4">
-              <button
-                type="submit"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Logout
-              </button>
-            </form>
-          </div>
-        </div>
+              <h1 className="mt-4 text-3xl font-semibold tracking-tight text-white md:text-5xl">
+                {bot.company_name || "Your bot"}
+              </h1>
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Status</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900">{statusText}</div>
-          </div>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 md:text-base">
+                View your assistant status, recent leads, conversations, and installation code.
+              </p>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Tariff</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900">
-              {bot.tariff || "—"}
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <div className={`rounded-full border px-3 py-1 text-sm font-medium ${statusTone}`}>
+                  {statusText}
+                </div>
+
+                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-slate-300">
+                  Bot ID: <span className="font-medium text-white">{bot.public_bot_id}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="w-full max-w-sm rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                Account
+              </div>
+
+              <div className="mt-3 text-sm text-slate-400">Login email</div>
+              <div className="mt-1 break-all text-base font-medium text-white">
+                {session.email}
+              </div>
+
+              <form action="/api/client/logout" method="post" className="mt-5">
+                <button
+                  type="submit"
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/10"
+                >
+                  Logout
+                </button>
+              </form>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Paid until</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900">
-              {formatDate(bot.paid_until)}
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-sm text-slate-400">Status</div>
+              <div className="mt-3 text-3xl font-semibold text-white">{statusText}</div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-sm text-slate-400">Tariff</div>
+              <div className="mt-3 text-3xl font-semibold text-white">
+                {bot.tariff || "—"}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-sm text-slate-400">Paid until</div>
+              <div className="mt-3 text-3xl font-semibold text-white">
+                {formatDate(bot.paid_until)}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-sm text-slate-400">Total leads</div>
+              <div className="mt-3 text-3xl font-semibold text-white">
+                {leadCount ?? 0}
+              </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Total leads</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900">
-              {leadCount ?? 0}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-8 grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Conversations this month</div>
-            <div className="mt-2 text-3xl font-semibold text-slate-900">
-              {conversations.length}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Company</div>
-            <div className="mt-2 text-lg font-semibold text-slate-900">
-              {bot.company_name || "—"}
+          <div className="mt-6 grid gap-4 xl:grid-cols-[1.1fr_1.1fr_0.9fr]">
+            <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-sm text-slate-400">Conversations this month</div>
+              <div className="mt-3 text-4xl font-semibold text-white">
+                {conversations.length}
+              </div>
+              <p className="mt-3 text-sm leading-6 text-slate-400">
+                Total conversations created since the start of the current month.
+              </p>
             </div>
 
-            <div className="mt-6 text-sm text-slate-500">Niche</div>
-            <div className="mt-1 text-base text-slate-900">{bot.niche || "—"}</div>
-          </div>
+            <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-sm text-slate-400">Company</div>
+              <div className="mt-3 text-2xl font-semibold text-white">
+                {bot.company_name || "—"}
+              </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Quick actions</div>
+              <div className="mt-6 text-sm text-slate-400">Niche</div>
+              <div className="mt-2 text-base leading-7 text-slate-200">
+                {bot.niche || "—"}
+              </div>
+            </div>
 
-            <div className="mt-4 flex flex-col gap-3">
-              <Link
-                href="/client/leads?page=1"
-                className="rounded-lg bg-slate-900 px-4 py-2 text-center text-sm font-medium text-white hover:bg-slate-800"
-              >
-                View leads
-              </Link>
+            <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+              <div className="text-sm text-slate-400">Quick actions</div>
 
-              <Link
-                href="/client/conversations?page=1"
-                className="rounded-lg border border-slate-200 px-4 py-2 text-center text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                View conversations
-              </Link>
+              <div className="mt-5 flex flex-col gap-3">
+                <Link
+                  href="/client/leads?page=1"
+                  className="rounded-xl bg-white px-4 py-3 text-center text-sm font-semibold text-slate-950 transition hover:opacity-90"
+                >
+                  View leads
+                </Link>
+
+                <Link
+                  href="/client/conversations?page=1"
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-center text-sm font-semibold text-white transition hover:bg-white/10"
+                >
+                  View conversations
+                </Link>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-sm text-slate-500">Embed code</div>
+          <div className="mt-6 rounded-[28px] border border-white/10 bg-[#0b1728]/80 p-5 md:p-6">
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="text-sm text-slate-400">Embed code</div>
+                <h2 className="mt-2 text-xl font-semibold text-white">Install on your website</h2>
+              </div>
 
-          <div className="mt-3 overflow-x-auto rounded-xl bg-slate-900 p-4 text-sm text-slate-100">
-            <code>{embedCode}</code>
+              <div className="text-sm text-slate-400">
+                Paste this code before closing {"</body>"} tag.
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto rounded-[20px] border border-white/10 bg-[#050b14] p-4 text-sm text-slate-100 md:p-5">
+              <code>{embedCode}</code>
+            </div>
           </div>
-
-          <p className="mt-3 text-sm text-slate-500">
-            Paste this code before closing {"</body>"} tag on your website.
-          </p>
         </div>
       </div>
     </main>

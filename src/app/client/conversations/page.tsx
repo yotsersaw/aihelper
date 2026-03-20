@@ -18,13 +18,6 @@ function formatDate(value?: string | null) {
   }).format(date);
 }
 
-function trimText(value?: string | null, max = 60) {
-  if (!value) return "—";
-  const text = String(value).replace(/\s+/g, " ").trim();
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}...`;
-}
-
 type SearchParams = {
   id?: string;
 };
@@ -50,7 +43,7 @@ export default async function ClientConversationsPage({
       .single(),
     supabase
       .from("conversations")
-      .select("id, created_at, source_page, session_id")
+      .select("id, created_at, session_id")
       .eq("bot_id", session.botId)
       .order("created_at", { ascending: false })
       .limit(100)
@@ -165,10 +158,6 @@ export default async function ClientConversationsPage({
                       <div className="mt-3 text-sm text-slate-500">
                         {formatDate(conversation.created_at)}
                       </div>
-
-                      <div className="mt-2 text-sm text-slate-700">
-                        {trimText(conversation.source_page || "No page", 70)}
-                      </div>
                     </Link>
                   );
                 })}
@@ -197,12 +186,6 @@ export default async function ClientConversationsPage({
                           Messages:{" "}
                           <span className="font-medium text-slate-900">
                             {selectedMessages.length}
-                          </span>
-                        </div>
-                        <div className="mt-1 break-all">
-                          Page:{" "}
-                          <span className="text-slate-900">
-                            {selectedConversation.source_page || "—"}
                           </span>
                         </div>
                         <div className="mt-1 break-all">

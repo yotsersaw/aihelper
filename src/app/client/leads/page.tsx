@@ -39,7 +39,8 @@ function getLeadEmail(lead: any) {
 
 function getLeadSummary(lead: any) {
   return trimText(
-    lead.summary ||
+    lead.note ||
+      lead.summary ||
       lead.message ||
       lead.notes ||
       lead.details ||

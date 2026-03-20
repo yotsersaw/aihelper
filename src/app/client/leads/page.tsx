@@ -53,7 +53,15 @@ function getLeadSummary(lead: any) {
   );
 }
 
-export default async function ClientLeadsPage() {
+type SearchParams = {
+  page?: string;
+};
+
+export default async function ClientLeadsPage({
+  searchParams
+}: {
+  searchParams?: SearchParams;
+}) {
   const session = getClientSession();
 
   if (!session) {
@@ -62,7 +70,16 @@ export default async function ClientLeadsPage() {
 
   const supabase = getServiceSupabase();
 
-  const [{ data: bot }, { data: leads }] = await Promise.all([
+  const pageSize = 10;
+  const currentPage = Math.max(1, Number(searchParams?.page || "1") || 1);
+  const from = (currentPage - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const [
+    { data: bot },
+    { count: totalLeads },
+    { data: leads }
+  ] = await Promise.all([
     supabase
       .from("bots")
       .select("company_name, public_bot_id")
@@ -70,11 +87,18 @@ export default async function ClientLeadsPage() {
       .single(),
     supabase
       .from("leads")
+      .select("id", { count: "exact", head: true })
+      .eq("bot_id", session.botId),
+    supabase
+      .from("leads")
       .select("*")
       .eq("bot_id", session.botId)
       .order("created_at", { ascending: false })
-      .limit(100)
+      .range(from, to)
   ]);
+
+  const total = totalLeads ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -99,7 +123,7 @@ export default async function ClientLeadsPage() {
 
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
             <div className="text-slate-500">Total</div>
-            <div className="font-medium text-slate-900">{leads?.length ?? 0}</div>
+            <div className="font-medium text-slate-900">{total}</div>
           </div>
         </div>
 
@@ -147,6 +171,40 @@ export default async function ClientLeadsPage() {
               </tbody>
             </table>
           </div>
+
+          {total > 0 && (
+            <div className="flex items-center justify-center gap-3 border-t border-slate-200 px-4 py-4">
+              {currentPage > 1 ? (
+                <Link
+                  href={`/client/leads?page=${currentPage - 1}`}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  ← Previous
+                </Link>
+              ) : (
+                <div className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-300">
+                  ← Previous
+                </div>
+              )}
+
+              <div className="text-sm text-slate-600">
+                {currentPage} / {totalPages}
+              </div>
+
+              {currentPage < totalPages ? (
+                <Link
+                  href={`/client/leads?page=${currentPage + 1}`}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Next →
+                </Link>
+              ) : (
+                <div className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-300">
+                  Next →
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </main>

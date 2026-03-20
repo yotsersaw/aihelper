@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { getServiceSupabase } from "@/lib/supabase";
+import { hashClientPassword } from "@/lib/client-auth";
 
 type SortKey =
   | "status"
@@ -42,6 +43,11 @@ function normalizeSearchParam(value: string | string[] | undefined) {
   return value;
 }
 
+function normalizeClientEmail(value: FormDataEntryValue | null) {
+  const email = String(value || "").trim().toLowerCase();
+  return email || null;
+}
+
 function compareStrings(a: string | null | undefined, b: string | null | undefined) {
   return String(a || "").localeCompare(String(b || ""), "ru", { sensitivity: "base" });
 }
@@ -58,36 +64,57 @@ async function createBot(formData: FormData) {
   "use server";
 
   const supabase = getServiceSupabase();
+  const clientEmail = normalizeClientEmail(formData.get("client_email"));
+  const clientPassword = String(formData.get("client_password") || "").trim();
+  const clientIsActive = formData.get("client_is_active") === "on";
 
-  await supabase.from("bots").insert({
-    public_bot_id: String(formData.get("public_bot_id") || "").trim(),
-    company_name: String(formData.get("company_name") || "").trim(),
-    niche: String(formData.get("niche") || "").trim() || null,
-    system_prompt: String(formData.get("system_prompt") || "").trim(),
-    model: String(formData.get("model") || "minimax/minimax-m2.5"),
-    analysis_model: String(formData.get("analysis_model") || "openai/gpt-4o-mini"),
-    analysis_prompt: String(formData.get("analysis_prompt") || "").trim() || null,
-    bot_name: String(formData.get("bot_name") || "AI Assistant").trim(),
-    widget_color: String(formData.get("widget_color") || "#2563eb").trim(),
-    temperature: Number(formData.get("temperature") || 0.3),
-    max_completion_tokens: Number(formData.get("max_completion_tokens") || 1000),
-    allowed_domain: String(formData.get("allowed_domain") || "*"),
-    handoff_email: String(formData.get("handoff_email") || "").trim() || null,
-    monthly_token_limit: Number(formData.get("monthly_token_limit") || 200000),
-    monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
-    tariff: String(formData.get("tariff") || "trial").trim(),
-    paid_until: normalizePaidUntil(formData.get("paid_until")),
-    monthly_conversation_limit: Number(formData.get("monthly_conversation_limit") || 500),
-    welcome_message: String(formData.get("welcome_message") || "Hi! How can I help you today?").trim(),
-    error_message: String(formData.get("error_message") || "Sorry, something went wrong. Please try again.").trim(),
-    auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
-    chat_open_delay: Number(formData.get("chat_open_delay") ?? 5),
-    badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
-    telegram_enabled: formData.get("telegram_enabled") === "on",
-    telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim() || null,
-    enable_analysis: formData.get("enable_analysis") === "on",
-    is_active: formData.get("is_active") === "on"
-  });
+  const { data: createdBot, error } = await supabase
+    .from("bots")
+    .insert({
+      public_bot_id: String(formData.get("public_bot_id") || "").trim(),
+      company_name: String(formData.get("company_name") || "").trim(),
+      niche: String(formData.get("niche") || "").trim() || null,
+      system_prompt: String(formData.get("system_prompt") || "").trim(),
+      model: String(formData.get("model") || "minimax/minimax-m2.5"),
+      analysis_model: String(formData.get("analysis_model") || "openai/gpt-4o-mini"),
+      analysis_prompt: String(formData.get("analysis_prompt") || "").trim() || null,
+      bot_name: String(formData.get("bot_name") || "AI Assistant").trim(),
+      widget_color: String(formData.get("widget_color") || "#2563eb").trim(),
+      temperature: Number(formData.get("temperature") || 0.3),
+      max_completion_tokens: Number(formData.get("max_completion_tokens") || 1000),
+      allowed_domain: String(formData.get("allowed_domain") || "*"),
+      handoff_email: String(formData.get("handoff_email") || "").trim() || null,
+      monthly_token_limit: Number(formData.get("monthly_token_limit") || 200000),
+      monthly_cost_limit: Number(formData.get("monthly_cost_limit") || 50),
+      tariff: String(formData.get("tariff") || "trial").trim(),
+      paid_until: normalizePaidUntil(formData.get("paid_until")),
+      monthly_conversation_limit: Number(formData.get("monthly_conversation_limit") || 500),
+      welcome_message: String(formData.get("welcome_message") || "Hi! How can I help you today?").trim(),
+      error_message: String(formData.get("error_message") || "Sorry, something went wrong. Please try again.").trim(),
+      auto_open_delay: Number(formData.get("auto_open_delay") ?? 8),
+      chat_open_delay: Number(formData.get("chat_open_delay") ?? 5),
+      badge_message: String(formData.get("badge_message") || "👋 Hi! Need help? I can answer questions and book appointments.").trim(),
+      telegram_enabled: formData.get("telegram_enabled") === "on",
+      telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim() || null,
+      enable_analysis: formData.get("enable_analysis") === "on",
+      is_active: formData.get("is_active") === "on"
+    })
+    .select("id")
+    .single();
+
+  if (error || !createdBot) {
+    revalidatePath("/admin");
+    return;
+  }
+
+  if (clientEmail && clientPassword) {
+    await supabase.from("client_accounts").insert({
+      bot_id: createdBot.id,
+      email: clientEmail,
+      password_hash: hashClientPassword(clientPassword),
+      is_active: clientIsActive
+    });
+  }
 
   revalidatePath("/admin");
 }
@@ -97,6 +124,9 @@ async function updateBot(formData: FormData) {
 
   const supabase = getServiceSupabase();
   const id = String(formData.get("id"));
+  const clientEmail = normalizeClientEmail(formData.get("client_email"));
+  const clientPassword = String(formData.get("client_password") || "").trim();
+  const clientIsActive = formData.get("client_is_active") === "on";
 
   await supabase
     .from("bots")
@@ -131,6 +161,39 @@ async function updateBot(formData: FormData) {
     })
     .eq("id", id);
 
+  const { data: existingClient } = await supabase
+    .from("client_accounts")
+    .select("id, email")
+    .eq("bot_id", id)
+    .maybeSingle();
+
+  if (existingClient) {
+    const payload: {
+      email?: string;
+      is_active: boolean;
+      password_hash?: string;
+    } = {
+      email: clientEmail || existingClient.email,
+      is_active: clientIsActive
+    };
+
+    if (clientPassword) {
+      payload.password_hash = hashClientPassword(clientPassword);
+    }
+
+    await supabase
+      .from("client_accounts")
+      .update(payload)
+      .eq("id", existingClient.id);
+  } else if (clientEmail && clientPassword) {
+    await supabase.from("client_accounts").insert({
+      bot_id: id,
+      email: clientEmail,
+      password_hash: hashClientPassword(clientPassword),
+      is_active: clientIsActive
+    });
+  }
+
   revalidatePath("/admin");
 }
 
@@ -140,6 +203,7 @@ async function deleteBot(formData: FormData) {
   const supabase = getServiceSupabase();
   const id = String(formData.get("id"));
 
+  await supabase.from("client_accounts").delete().eq("bot_id", id);
   await supabase.from("bots").delete().eq("id", id);
   revalidatePath("/admin");
 }
@@ -250,7 +314,8 @@ export default async function AdminPage({
     { data: usageData },
     { data: allConversationsData },
     { data: monthlyConversationsData },
-    { data: monthlyMessagesData }
+    { data: monthlyMessagesData },
+    { data: clientAccountsData }
   ] = await Promise.all([
     supabase.from("bots").select("*").order("created_at", { ascending: false }),
     supabase
@@ -264,7 +329,10 @@ export default async function AdminPage({
       .from("messages")
       .select("conversation_id")
       .eq("role", "assistant")
-      .gte("created_at", monthStart.toISOString())
+      .gte("created_at", monthStart.toISOString()),
+    supabase
+      .from("client_accounts")
+      .select("id, bot_id, email, is_active")
   ]);
 
   const bots = botsData ?? [];
@@ -272,6 +340,7 @@ export default async function AdminPage({
   const allConversations = allConversationsData ?? [];
   const monthlyConversations = monthlyConversationsData ?? [];
   const monthlyMessages = monthlyMessagesData ?? [];
+  const clientAccounts = clientAccountsData ?? [];
 
   const totalCost = usage.reduce((sum, row) => sum + Number(row.total_cost || 0), 0);
   const totalTokens = usage.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0);
@@ -298,6 +367,11 @@ export default async function AdminPage({
 
   const totalMonthlyConversations = Array.from(conversationCountByBotId.values()).reduce((sum, count) => sum + count, 0);
   const totalMonthlyMessages = Array.from(messageCountByBotId.values()).reduce((sum, count) => sum + count, 0);
+
+  const clientAccountByBotId = new Map<string, (typeof clientAccounts)[number]>();
+  for (const clientAccount of clientAccounts) {
+    clientAccountByBotId.set(clientAccount.bot_id, clientAccount);
+  }
 
   const botsWithStats = bots.map((bot) => {
     const usedConversations = conversationCountByBotId.get(bot.id) || 0;
@@ -359,7 +433,8 @@ export default async function AdminPage({
       rowClass,
       statusDotClass,
       statusText,
-      statusRank
+      statusRank,
+      clientAccount: clientAccountByBotId.get(bot.id) || null
     };
   });
 
@@ -708,6 +783,54 @@ export default async function AdminPage({
                               />
                             </div>
 
+                            <div className="col-span-2 mt-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                              <div className="mb-3">
+                                <p className="text-sm font-semibold text-slate-900">Client access</p>
+                                <p className="text-xs text-slate-500">
+                                  Кабинет клиента. Пароль можно оставить пустым, если менять не нужно.
+                                </p>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-xs text-slate-500">Client email</label>
+                                  <input
+                                    name="client_email"
+                                    type="email"
+                                    defaultValue={bot.clientAccount?.email ?? ""}
+                                    placeholder="client@example.com"
+                                    className="w-full rounded-md border p-2 text-sm"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-xs text-slate-500">New password</label>
+                                  <input
+                                    name="client_password"
+                                    type="text"
+                                    placeholder={bot.clientAccount ? "Оставь пустым чтобы не менять" : "Задай пароль для клиента"}
+                                    className="w-full rounded-md border p-2 text-sm"
+                                  />
+                                </div>
+
+                                <div className="col-span-2 flex items-center gap-2 pt-1">
+                                  <label className="flex items-center gap-2 text-sm">
+                                    <input
+                                      name="client_is_active"
+                                      type="checkbox"
+                                      defaultChecked={bot.clientAccount ? bot.clientAccount.is_active : true}
+                                    />
+                                    Client cabinet active
+                                  </label>
+                                  {bot.clientAccount ? (
+                                    <span className="text-xs text-slate-500">Аккаунт уже создан</span>
+                                  ) : (
+                                    <span className="text-xs text-slate-400">Аккаунт ещё не создан</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
                             <div>
                               <label className="text-xs text-slate-500">Temperature</label>
                               <input
@@ -935,6 +1058,34 @@ export default async function AdminPage({
             <div>
               <label className="text-xs text-slate-500">Лимит разговоров / месяц</label>
               <input name="monthly_conversation_limit" type="number" defaultValue="500" min="1" className="w-full rounded-md border p-2 text-sm" />
+            </div>
+
+            <div className="col-span-2 mt-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-3">
+                <p className="text-sm font-semibold text-slate-900">Client access</p>
+                <p className="text-xs text-slate-500">
+                  Необязательно. Если заполнишь email и пароль, клиентский кабинет создастся сразу.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-slate-500">Client email</label>
+                  <input name="client_email" type="email" placeholder="client@example.com" className="w-full rounded-md border p-2 text-sm" />
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-500">Client password</label>
+                  <input name="client_password" type="text" placeholder="Password for client cabinet" className="w-full rounded-md border p-2 text-sm" />
+                </div>
+
+                <div className="col-span-2 flex items-center gap-2 pt-1">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input name="client_is_active" type="checkbox" defaultChecked />
+                    Client cabinet active
+                  </label>
+                </div>
+              </div>
             </div>
 
             <input name="temperature" type="number" step="0.1" min="0" max="1" defaultValue="0.3" placeholder="Temperature" className="rounded-md border p-2 text-sm" />

@@ -9,7 +9,7 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
-  return new Intl.DateTimeFormat("ru-RU", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -18,14 +18,22 @@ function formatDate(value?: string | null) {
   }).format(date);
 }
 
-function trimText(value?: string | null, max = 140) {
+function trimText(value?: string | null, max = 60) {
   if (!value) return "—";
   const text = String(value).replace(/\s+/g, " ").trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max)}...`;
 }
 
-export default async function ClientConversationsPage() {
+type SearchParams = {
+  id?: string;
+};
+
+export default async function ClientConversationsPage({
+  searchParams
+}: {
+  searchParams?: SearchParams;
+}) {
   const session = getClientSession();
 
   if (!session) {
@@ -42,154 +50,218 @@ export default async function ClientConversationsPage() {
       .single(),
     supabase
       .from("conversations")
-      .select("*")
+      .select("id, created_at, source_page, session_id")
       .eq("bot_id", session.botId)
       .order("created_at", { ascending: false })
       .limit(100)
   ]);
 
-  const conversationIds = (conversations ?? []).map((item: any) => item.id);
+  const conversationList = conversations ?? [];
+  const requestedId = searchParams?.id;
+  const selectedConversation =
+    conversationList.find((item) => item.id === requestedId) || conversationList[0] || null;
 
-  let messagesByConversation: Record<string, any[]> = {};
+  const conversationIds = conversationList.map((item) => item.id);
+
+  let messageCounts: Record<string, number> = {};
+  let selectedMessages: Array<{
+    id: string;
+    role: string;
+    content: string | null;
+    created_at: string | null;
+  }> = [];
 
   if (conversationIds.length > 0) {
-    const { data: messages } = await supabase
+    const { data: messageRows } = await supabase
       .from("messages")
-      .select("id, conversation_id, role, content, created_at")
-      .in("conversation_id", conversationIds)
+      .select("conversation_id")
+      .in("conversation_id", conversationIds);
+
+    for (const row of messageRows ?? []) {
+      const key = row.conversation_id;
+      messageCounts[key] = (messageCounts[key] || 0) + 1;
+    }
+  }
+
+  if (selectedConversation) {
+    const { data } = await supabase
+      .from("messages")
+      .select("id, role, content, created_at")
+      .eq("conversation_id", selectedConversation.id)
       .order("created_at", { ascending: true });
 
-    for (const message of messages ?? []) {
-      if (!messagesByConversation[message.conversation_id]) {
-        messagesByConversation[message.conversation_id] = [];
-      }
-      messagesByConversation[message.conversation_id].push(message);
-    }
+    selectedMessages = data ?? [];
   }
 
   return (
     <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl px-6 py-10">
+      <div className="mx-auto max-w-7xl px-6 py-10">
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
             <Link
               href="/client"
               className="text-sm text-slate-500 hover:text-slate-900"
             >
-              ← Назад в кабинет
+              ← Back to dashboard
             </Link>
+
             <h1 className="mt-3 text-3xl font-semibold text-slate-900">
-              Беседы
+              Conversations
             </h1>
+
             <p className="mt-2 text-sm text-slate-600">
               {bot?.company_name || "Your bot"} · {bot?.public_bot_id || "—"}
             </p>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
-            <div className="text-slate-500">Всего</div>
+            <div className="text-slate-500">Total</div>
             <div className="font-medium text-slate-900">
-              {conversations?.length ?? 0}
+              {conversationList.length}
             </div>
           </div>
         </div>
 
-        <div className="space-y-4">
-          {(conversations ?? []).length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
-              Бесед пока нет
+        {conversationList.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
+            No conversations yet
+          </div>
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Conversation list
+                </h2>
+              </div>
+
+              <div className="max-h-[760px] overflow-y-auto">
+                {conversationList.map((conversation) => {
+                  const isActive = selectedConversation?.id === conversation.id;
+
+                  return (
+                    <Link
+                      key={conversation.id}
+                      href={`/client/conversations?id=${conversation.id}`}
+                      className={`block border-b border-slate-100 px-5 py-4 transition hover:bg-slate-50 ${
+                        isActive ? "bg-blue-50" : "bg-white"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900">
+                            {bot?.company_name || "Conversation"}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500 break-all">
+                            {conversation.id}
+                          </div>
+                        </div>
+
+                        <div className="shrink-0 text-xs text-slate-500">
+                          {messageCounts[conversation.id] || 0} msgs
+                        </div>
+                      </div>
+
+                      <div className="mt-3 text-sm text-slate-500">
+                        {formatDate(conversation.created_at)}
+                      </div>
+
+                      <div className="mt-2 text-sm text-slate-700">
+                        {trimText(conversation.source_page || "No page", 70)}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-          ) : (
-            (conversations ?? []).map((conversation: any) => {
-              const messages = messagesByConversation[conversation.id] ?? [];
-              const userMessages = messages.filter((m) => m.role === "user");
-              const assistantMessages = messages.filter((m) => m.role === "assistant");
 
-              const firstUserMessage =
-                userMessages[0]?.content || messages[0]?.content || "—";
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              {selectedConversation ? (
+                <>
+                  <div className="border-b border-slate-200 px-5 py-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <h2 className="text-lg font-semibold text-slate-900">
+                          {bot?.company_name || "Conversation"}
+                        </h2>
+                        <div className="mt-1 text-sm text-slate-500">
+                          Created: {formatDate(selectedConversation.created_at)}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500 break-all">
+                          ID: {selectedConversation.id}
+                        </div>
+                      </div>
 
-              const lastMessage =
-                messages[messages.length - 1]?.content || "—";
-
-              return (
-                <div
-                  key={conversation.id}
-                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-                >
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div>
                       <div className="text-sm text-slate-500">
-                        Создано: {formatDate(conversation.created_at)}
-                      </div>
-                      <div className="mt-1 text-sm text-slate-500 break-all">
-                        ID: {conversation.id}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-3 text-sm">
-                      <div className="rounded-xl bg-slate-50 px-3 py-2">
-                        <div className="text-slate-500">Сообщений</div>
-                        <div className="font-semibold text-slate-900">
-                          {messages.length}
+                        <div>
+                          Messages:{" "}
+                          <span className="font-medium text-slate-900">
+                            {selectedMessages.length}
+                          </span>
                         </div>
-                      </div>
-
-                      <div className="rounded-xl bg-slate-50 px-3 py-2">
-                        <div className="text-slate-500">Клиент</div>
-                        <div className="font-semibold text-slate-900">
-                          {userMessages.length}
+                        <div className="mt-1 break-all">
+                          Page:{" "}
+                          <span className="text-slate-900">
+                            {selectedConversation.source_page || "—"}
+                          </span>
                         </div>
-                      </div>
-
-                      <div className="rounded-xl bg-slate-50 px-3 py-2">
-                        <div className="text-slate-500">Бот</div>
-                        <div className="font-semibold text-slate-900">
-                          {assistantMessages.length}
+                        <div className="mt-1 break-all">
+                          Session:{" "}
+                          <span className="text-slate-900">
+                            {selectedConversation.session_id || "—"}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <div>
+                  <div className="max-h-[760px] overflow-y-auto p-5">
+                    {selectedMessages.length === 0 ? (
                       <div className="text-sm text-slate-500">
-                        Первое сообщение
+                        No messages in this conversation
                       </div>
-                      <div className="mt-2 rounded-xl bg-slate-50 p-4 text-sm text-slate-900">
-                        {trimText(firstUserMessage, 180)}
-                      </div>
-                    </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {selectedMessages.map((message) => {
+                          const isUser = message.role === "user";
 
-                    <div>
-                      <div className="text-sm text-slate-500">
-                        Последнее сообщение
+                          return (
+                            <div
+                              key={message.id}
+                              className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+                            >
+                              <div className="max-w-[85%]">
+                                <div className="mb-1 text-xs text-slate-500">
+                                  {isUser ? "Client" : "Bot"} · {formatDate(message.created_at)}
+                                </div>
+
+                                <div
+                                  className={`rounded-2xl px-4 py-3 text-sm leading-7 ${
+                                    isUser
+                                      ? "bg-blue-600 text-white"
+                                      : "bg-slate-100 text-slate-900"
+                                  }`}
+                                >
+                                  <div className="whitespace-pre-wrap break-words">
+                                    {message.content || "—"}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div className="mt-2 rounded-xl bg-slate-50 p-4 text-sm text-slate-900">
-                        {trimText(lastMessage, 180)}
-                      </div>
-                    </div>
+                    )}
                   </div>
-
-                  <div className="mt-4 grid gap-3 md:grid-cols-2">
-                    <div className="text-sm text-slate-500">
-                      Страница:{" "}
-                      <span className="text-slate-900 break-all">
-                        {conversation.source_page || "—"}
-                      </span>
-                    </div>
-
-                    <div className="text-sm text-slate-500">
-                      Session:{" "}
-                      <span className="text-slate-900 break-all">
-                        {conversation.session_id || "—"}
-                      </span>
-                    </div>
-                  </div>
+                </>
+              ) : (
+                <div className="p-10 text-center text-slate-500">
+                  Select a conversation
                 </div>
-              );
-            })
-          )}
-        </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

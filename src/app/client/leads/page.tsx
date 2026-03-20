@@ -75,11 +75,7 @@ export default async function ClientLeadsPage({
   const from = (currentPage - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  const [
-    { data: bot },
-    { count: totalLeads },
-    { data: leads }
-  ] = await Promise.all([
+  const [{ data: bot }, { count: totalLeads }, { data: leads }] = await Promise.all([
     supabase
       .from("bots")
       .select("company_name, public_bot_id")
@@ -101,110 +97,144 @@ export default async function ClientLeadsPage({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-7xl px-6 py-10">
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <div>
-            <Link
-              href="/client"
-              className="text-sm text-slate-500 hover:text-slate-900"
-            >
-              ← Back to dashboard
-            </Link>
+    <main className="min-h-screen bg-[#07111f] text-white">
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute left-[-120px] top-[-120px] h-[320px] w-[320px] rounded-full bg-cyan-500/10 blur-3xl" />
+        <div className="absolute right-[-140px] top-[80px] h-[340px] w-[340px] rounded-full bg-fuchsia-500/10 blur-3xl" />
+        <div className="absolute bottom-[-120px] left-[20%] h-[280px] w-[280px] rounded-full bg-emerald-500/10 blur-3xl" />
+      </div>
 
-            <h1 className="mt-3 text-3xl font-semibold text-slate-900">
-              Leads
-            </h1>
+      <div className="relative mx-auto max-w-7xl px-6 py-8 md:px-8 md:py-10">
+        <div className="rounded-[32px] border border-white/10 bg-white/[0.04] p-6 shadow-2xl shadow-black/30 backdrop-blur-xl md:p-8">
+          <div className="flex flex-col gap-6 border-b border-white/10 pb-6 md:flex-row md:items-start md:justify-between">
+            <div className="max-w-3xl">
+              <Link
+                href="/client"
+                className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-white"
+              >
+                <span>←</span>
+                <span>Back to dashboard</span>
+              </Link>
 
-            <p className="mt-2 text-sm text-slate-600">
-              {bot?.company_name || "Your bot"} · {bot?.public_bot_id || "—"}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
-            <div className="text-slate-500">Total</div>
-            <div className="font-medium text-slate-900">{total}</div>
-          </div>
-        </div>
-
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
-                <tr className="text-left text-slate-500">
-                  <th className="px-4 py-3 font-medium">Date</th>
-                  <th className="px-4 py-3 font-medium">Name</th>
-                  <th className="px-4 py-3 font-medium">Phone</th>
-                  <th className="px-4 py-3 font-medium">Email</th>
-                  <th className="px-4 py-3 font-medium">Summary</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {(leads ?? []).length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
-                      No leads yet
-                    </td>
-                  </tr>
-                ) : (
-                  (leads ?? []).map((lead: any) => (
-                    <tr key={lead.id} className="border-t border-slate-100">
-                      <td className="px-4 py-3 text-slate-700">
-                        {formatDate(lead.created_at)}
-                      </td>
-                      <td className="px-4 py-3 font-medium text-slate-900">
-                        {getLeadName(lead)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {getLeadPhone(lead)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {getLeadEmail(lead)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {getLeadSummary(lead)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {total > 0 && (
-            <div className="flex items-center justify-center gap-3 border-t border-slate-200 px-4 py-4">
-              {currentPage > 1 ? (
-                <Link
-                  href={`/client/leads?page=${currentPage - 1}`}
-                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  ← Previous
-                </Link>
-              ) : (
-                <div className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-300">
-                  ← Previous
-                </div>
-              )}
-
-              <div className="text-sm text-slate-600">
-                {currentPage} / {totalPages}
+              <div className="mt-4 inline-flex items-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-cyan-200">
+                Leads
               </div>
 
-              {currentPage < totalPages ? (
-                <Link
-                  href={`/client/leads?page=${currentPage + 1}`}
-                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  Next →
-                </Link>
-              ) : (
-                <div className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-300">
-                  Next →
-                </div>
-              )}
+              <h1 className="mt-4 text-3xl font-semibold tracking-tight text-white md:text-5xl">
+                Client leads
+              </h1>
+
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 md:text-base">
+                Recent lead submissions collected by your assistant.
+              </p>
+
+              <div className="mt-5 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 inline-flex">
+                {bot?.company_name || "Your bot"} · {bot?.public_bot_id || "—"}
+              </div>
             </div>
-          )}
+
+            <div className="grid w-full max-w-md gap-4 sm:grid-cols-2">
+              <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+                <div className="text-sm text-slate-400">Total leads</div>
+                <div className="mt-3 text-3xl font-semibold text-white">{total}</div>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#0b1728]/80 p-5">
+                <div className="text-sm text-slate-400">Page</div>
+                <div className="mt-3 text-3xl font-semibold text-white">
+                  {currentPage} / {totalPages}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1728]/80">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="border-b border-white/10 bg-white/[0.03] text-left text-slate-400">
+                  <tr>
+                    <th className="px-5 py-4 font-medium">Date</th>
+                    <th className="px-5 py-4 font-medium">Name</th>
+                    <th className="px-5 py-4 font-medium">Phone</th>
+                    <th className="px-5 py-4 font-medium">Email</th>
+                    <th className="px-5 py-4 font-medium">Summary</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {(leads ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-5 py-14 text-center text-slate-400">
+                        No leads yet
+                      </td>
+                    </tr>
+                  ) : (
+                    (leads ?? []).map((lead: any) => (
+                      <tr
+                        key={lead.id}
+                        className="border-t border-white/5 text-slate-200 transition hover:bg-white/[0.03]"
+                      >
+                        <td className="px-5 py-4 whitespace-nowrap text-slate-300">
+                          {formatDate(lead.created_at)}
+                        </td>
+                        <td className="px-5 py-4 font-medium text-white">
+                          {getLeadName(lead)}
+                        </td>
+                        <td className="px-5 py-4 text-slate-300">
+                          {getLeadPhone(lead)}
+                        </td>
+                        <td className="px-5 py-4 text-slate-300">
+                          <div className="max-w-[220px] truncate">
+                            {getLeadEmail(lead)}
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-slate-300">
+                          <div className="max-w-[360px] leading-6">
+                            {getLeadSummary(lead)}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {total > 0 && (
+              <div className="flex flex-col items-center justify-between gap-3 border-t border-white/10 px-5 py-4 md:flex-row">
+                {currentPage > 1 ? (
+                  <Link
+                    href={`/client/leads?page=${currentPage - 1}`}
+                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
+                  >
+                    ← Previous
+                  </Link>
+                ) : (
+                  <div className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-slate-500">
+                    ← Previous
+                  </div>
+                )}
+
+                <div className="text-sm text-slate-400">
+                  Showing page <span className="font-medium text-white">{currentPage}</span> of{" "}
+                  <span className="font-medium text-white">{totalPages}</span>
+                </div>
+
+                {currentPage < totalPages ? (
+                  <Link
+                    href={`/client/leads?page=${currentPage + 1}`}
+                    className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:opacity-90"
+                  >
+                    Next →
+                  </Link>
+                ) : (
+                  <div className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-slate-500">
+                    Next →
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </main>

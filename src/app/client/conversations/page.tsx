@@ -20,6 +20,7 @@ function formatDate(value?: string | null) {
 
 type SearchParams = {
   id?: string;
+  page?: string;
 };
 
 export default async function ClientConversationsPage({
@@ -35,7 +36,16 @@ export default async function ClientConversationsPage({
 
   const supabase = getServiceSupabase();
 
-  const [{ data: bot }, { data: conversations }] = await Promise.all([
+  const pageSize = 10;
+  const currentPage = Math.max(1, Number(searchParams?.page || "1") || 1);
+  const from = (currentPage - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const [
+    { data: bot },
+    { count: totalConversations },
+    { data: conversations }
+  ] = await Promise.all([
     supabase
       .from("bots")
       .select("company_name, public_bot_id")
@@ -43,13 +53,20 @@ export default async function ClientConversationsPage({
       .single(),
     supabase
       .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .eq("bot_id", session.botId),
+    supabase
+      .from("conversations")
       .select("id, created_at, session_id")
       .eq("bot_id", session.botId)
       .order("created_at", { ascending: false })
-      .limit(100)
+      .range(from, to)
   ]);
 
   const conversationList = conversations ?? [];
+  const total = totalConversations ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   const requestedId = searchParams?.id;
   const selectedConversation =
     conversationList.find((item) => item.id === requestedId) || conversationList[0] || null;
@@ -109,9 +126,7 @@ export default async function ClientConversationsPage({
 
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
             <div className="text-slate-500">Total</div>
-            <div className="font-medium text-slate-900">
-              {conversationList.length}
-            </div>
+            <div className="font-medium text-slate-900">{total}</div>
           </div>
         </div>
 
@@ -135,7 +150,7 @@ export default async function ClientConversationsPage({
                   return (
                     <Link
                       key={conversation.id}
-                      href={`/client/conversations?id=${conversation.id}`}
+                      href={`/client/conversations?page=${currentPage}&id=${conversation.id}`}
                       className={`block border-b border-slate-100 px-5 py-4 transition hover:bg-slate-50 ${
                         isActive ? "bg-blue-50" : "bg-white"
                       }`}
@@ -162,6 +177,40 @@ export default async function ClientConversationsPage({
                   );
                 })}
               </div>
+
+              {total > 0 && (
+                <div className="flex items-center justify-center gap-3 border-t border-slate-200 px-4 py-4">
+                  {currentPage > 1 ? (
+                    <Link
+                      href={`/client/conversations?page=${currentPage - 1}`}
+                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      ← Previous
+                    </Link>
+                  ) : (
+                    <div className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-300">
+                      ← Previous
+                    </div>
+                  )}
+
+                  <div className="text-sm text-slate-600">
+                    {currentPage} / {totalPages}
+                  </div>
+
+                  {currentPage < totalPages ? (
+                    <Link
+                      href={`/client/conversations?page=${currentPage + 1}`}
+                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      Next →
+                    </Link>
+                  ) : (
+                    <div className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-300">
+                      Next →
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

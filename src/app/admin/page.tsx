@@ -2,6 +2,7 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { getServiceSupabase } from "@/lib/supabase";
 import { hashClientPassword } from "@/lib/client-auth";
+import AdminModalInit from "@/components/admin/AdminModalInit";
 
 type SortKey =
   | "status"
@@ -206,74 +207,6 @@ async function deleteBot(formData: FormData) {
   await supabase.from("client_accounts").delete().eq("bot_id", id);
   await supabase.from("bots").delete().eq("id", id);
   revalidatePath("/admin");
-}
-
-function modalScript() {
-  return `
-    (() => {
-      if (window.__selvantoAdminModalInit) return;
-      window.__selvantoAdminModalInit = true;
-
-      const getOpenModals = () =>
-        Array.from(document.querySelectorAll("[data-modal]")).filter(
-          (modal) => !modal.classList.contains("hidden")
-        );
-
-      const lockBody = () => {
-        if (getOpenModals().length > 0) {
-          document.body.classList.add("overflow-hidden");
-        } else {
-          document.body.classList.remove("overflow-hidden");
-        }
-      };
-
-      const openModal = (id) => {
-        const modal = document.getElementById(id);
-        if (!modal) return;
-        modal.classList.remove("hidden");
-        lockBody();
-      };
-
-      const closeModal = (modal) => {
-        if (!modal) return;
-        modal.classList.add("hidden");
-        lockBody();
-      };
-
-      document.addEventListener("click", (event) => {
-        const target = event.target;
-
-        const openButton = target.closest("[data-open-modal]");
-        if (openButton) {
-          event.preventDefault();
-          const modalId = openButton.getAttribute("data-open-modal");
-          if (modalId) openModal(modalId);
-          return;
-        }
-
-        const closeButton = target.closest("[data-close-modal]");
-        if (closeButton) {
-          event.preventDefault();
-          closeModal(closeButton.closest("[data-modal]"));
-        }
-      });
-
-      document.addEventListener("keydown", (event) => {
-        if (event.key !== "Escape") return;
-        const openModals = getOpenModals();
-        const lastModal = openModals[openModals.length - 1];
-        if (lastModal) closeModal(lastModal);
-      });
-
-      document.addEventListener("submit", (event) => {
-        const form = event.target;
-        if (!(form instanceof HTMLFormElement)) return;
-        const modal = form.closest("[data-modal]");
-        if (!modal) return;
-        closeModal(modal);
-      });
-    })();
-  `;
 }
 
 export default async function AdminPage({
@@ -518,6 +451,8 @@ export default async function AdminPage({
 
   return (
     <main className="min-h-screen bg-slate-50">
+      <AdminModalInit />
+
       <nav className="bg-white border-b border-slate-200 px-6 py-3 flex items-center gap-6">
         <span className="font-bold text-slate-800">Admin</span>
         <Link href="/admin" className="text-sm font-medium text-blue-600">Боты</Link>
@@ -1171,8 +1106,6 @@ export default async function AdminPage({
           </form>
         </div>
       </div>
-
-      <script dangerouslySetInnerHTML={{ __html: modalScript() }} />
     </main>
   );
 }

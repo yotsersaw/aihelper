@@ -9,13 +9,20 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
-  return new Intl.DateTimeFormat("ru-RU", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function trimText(value?: string | null, max = 70) {
+  if (!value) return "—";
+  const text = String(value).replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
 }
 
 function getLeadName(lead: any) {
@@ -28,6 +35,21 @@ function getLeadPhone(lead: any) {
 
 function getLeadEmail(lead: any) {
   return lead.email || "—";
+}
+
+function getLeadSummary(lead: any) {
+  return trimText(
+    lead.summary ||
+      lead.message ||
+      lead.notes ||
+      lead.details ||
+      lead.request ||
+      lead.service ||
+      lead.intent ||
+      lead.comment ||
+      "—",
+    90
+  );
 }
 
 export default async function ClientLeadsPage() {
@@ -55,25 +77,27 @@ export default async function ClientLeadsPage() {
 
   return (
     <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl px-6 py-10">
+      <div className="mx-auto max-w-7xl px-6 py-10">
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
             <Link
               href="/client"
               className="text-sm text-slate-500 hover:text-slate-900"
             >
-              ← Назад в кабинет
+              ← Back to dashboard
             </Link>
+
             <h1 className="mt-3 text-3xl font-semibold text-slate-900">
-              Лиды
+              Leads
             </h1>
+
             <p className="mt-2 text-sm text-slate-600">
               {bot?.company_name || "Your bot"} · {bot?.public_bot_id || "—"}
             </p>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
-            <div className="text-slate-500">Всего</div>
+            <div className="text-slate-500">Total</div>
             <div className="font-medium text-slate-900">{leads?.length ?? 0}</div>
           </div>
         </div>
@@ -83,20 +107,19 @@ export default async function ClientLeadsPage() {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50">
                 <tr className="text-left text-slate-500">
-                  <th className="px-4 py-3 font-medium">Дата</th>
-                  <th className="px-4 py-3 font-medium">Имя</th>
-                  <th className="px-4 py-3 font-medium">Телефон</th>
+                  <th className="px-4 py-3 font-medium">Date</th>
+                  <th className="px-4 py-3 font-medium">Name</th>
+                  <th className="px-4 py-3 font-medium">Phone</th>
                   <th className="px-4 py-3 font-medium">Email</th>
-                  <th className="px-4 py-3 font-medium">Статус</th>
-                  <th className="px-4 py-3 font-medium">Страница</th>
+                  <th className="px-4 py-3 font-medium">Summary</th>
                 </tr>
               </thead>
 
               <tbody>
                 {(leads ?? []).length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
-                      Лидов пока нет
+                    <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                      No leads yet
                     </td>
                   </tr>
                 ) : (
@@ -115,10 +138,7 @@ export default async function ClientLeadsPage() {
                         {getLeadEmail(lead)}
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        {lead.status || "new"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700 break-all">
-                        {lead.source_page || "—"}
+                        {getLeadSummary(lead)}
                       </td>
                     </tr>
                   ))

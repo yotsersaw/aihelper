@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getClientSession } from "@/lib/client-auth";
 import { getServiceSupabase } from "@/lib/supabase";
+import EmbedCodeCard from "@/components/client/EmbedCodeCard";
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
@@ -209,22 +210,7 @@ export default async function ClientPage() {
             </div>
           </div>
 
-          <div className="mt-6 rounded-[28px] border border-white/10 bg-[#0b1728]/80 p-5 md:p-6">
-            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-              <div>
-                <div className="text-sm text-slate-400">Embed code</div>
-                <h2 className="mt-2 text-xl font-semibold text-white">Install on your website</h2>
-              </div>
-
-              <div className="text-sm text-slate-400">
-                Paste this code before closing {"</body>"} tag.
-              </div>
-            </div>
-
-            <div className="mt-4 overflow-x-auto rounded-[20px] border border-white/10 bg-[#050b14] p-4 text-sm text-slate-100 md:p-5">
-              <code>{embedCode}</code>
-            </div>
-          </div>
+          <EmbedCodeCard code={embedCode} />
         </div>
       </div>
     </main>

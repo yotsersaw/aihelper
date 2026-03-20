@@ -12,6 +12,7 @@ const schema = z.object({
 });
 
 const HISTORY_WINDOW = 20;
+const MODEL_TIMEOUT_MS = 8000;
 
 const ALL_MODELS_FAILED =
   "I'm having technical difficulties right now. Please leave your phone number or email and we'll get back to you shortly!";
@@ -53,6 +54,9 @@ async function callOpenRouter(
   temperature: number,
   maxTokens: number
 ): Promise<{ ok: boolean; data?: any; reply?: string; error?: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -67,7 +71,8 @@ async function callOpenRouter(
         temperature,
         max_tokens: maxTokens,
         messages
-      })
+      }),
+      signal: controller.signal
     });
 
     const rawText = await res.text();
@@ -102,8 +107,15 @@ async function callOpenRouter(
 
     return { ok: true, data, reply };
   } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      console.error(`[Chat] Model ${model} timed out after ${MODEL_TIMEOUT_MS}ms`);
+      return { ok: false, error: `Timeout after ${MODEL_TIMEOUT_MS}ms` };
+    }
+
     console.error(`[Chat] Model ${model} exception:`, e);
     return { ok: false, error: String(e) };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

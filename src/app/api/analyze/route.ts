@@ -1,384 +1,500 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServiceSupabase } from "@/lib/supabase";
 import { env } from "@/lib/env";
+import { getServiceSupabase } from "@/lib/supabase";
 
 const DEFAULT_ANALYSIS_PROMPT =
-  'Extract from the conversation: client name, phone, email, messenger contact (Telegram/Instagram/WhatsApp if mentioned), and the reason for inquiry. Return ONLY valid JSON: {"name":"...","phone":"...","email":"...","messenger":"...","note":"...","has_contact":true/false}. Set has_contact=true if at least one contact detail is present (name, phone, email or messenger).';
+  'Extract from the conversation: client name, phone, email (if present), messenger contact (Telegram / WhatsApp / Instagram if mentioned), and the reason for inquiry. Return ONLY valid JSON in one line: {"name":"...","phone":"...","email":"...","messenger":"...","note":"...","has_contact":true/false}. Set has_contact=true only if there is a real contact method for follow-up: phone, email, or messenger. No markdown, no explanations.';
 
-// Fallback models if analysis_model not set
-const DEFAULT_ANALYSIS_MODELS = ["openai/gpt-4o-mini", "anthropic/claude-3-haiku"];
+type BotRelation =
+  | {
+      company_name: string;
+      handoff_email: string | null;
+      analysis_model?: string | null;
+      analysis_prompt?: string | null;
+      enable_analysis?: boolean | null;
+      telegram_enabled?: boolean | null;
+      telegram_chat_id?: string | null;
+    }
+  | {
+      company_name: string;
+      handoff_email: string | null;
+      analysis_model?: string | null;
+      analysis_prompt?: string | null;
+      enable_analysis?: boolean | null;
+      telegram_enabled?: boolean | null;
+      telegram_chat_id?: string | null;
+    }[];
 
-type TelegramApiResponse = {
-  ok?: boolean;
-  description?: string;
-  error_code?: number;
-  parameters?: {
-    migrate_to_chat_id?: string | number;
-  };
+type ParsedLead = {
+  name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  messenger?: string | null;
+  note?: string | null;
+  has_contact?: boolean | null;
 };
 
-async function callLLM(
-  model: string,
-  systemPrompt: string,
-  userContent: string
-): Promise<{ ok: boolean; raw?: string; error?: string }> {
-  try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
-        "X-Title": "AI Widget",
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: 400,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      console.error(`[Analyze] Model ${model} failed: ${res.status} ${txt}`);
-      return { ok: false, error: txt };
-    }
-
-    const data = await res.json();
-    const raw = data.choices?.[0]?.message?.content?.trim() || "";
-    return { ok: true, raw };
-  } catch (e) {
-    console.error(`[Analyze] Model ${model} exception:`, e);
-    return { ok: false, error: String(e) };
-  }
+function splitModels(value: string | null | undefined) {
+  return (value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-async function sendLeadEmail(
-  to: string,
-  companyName: string,
-  lead: { name?: string; phone?: string; email?: string; messenger?: string; note?: string }
-) {
-  if (!process.env.RESEND_API_KEY) return;
+function cleanText(value: unknown) {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  return v ? v : null;
+}
 
-  await fetch("https://api.resend.com/emails", {
+function stripCodeFences(raw: string) {
+  return raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+}
+
+function extractJsonCandidate(raw: string) {
+  const cleaned = stripCodeFences(raw);
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    return cleaned.slice(start, end + 1);
+  }
+  return cleaned;
+}
+
+function tryParseLead(raw: string): ParsedLead | null {
+  const candidates = [
+    extractJsonCandidate(raw),
+    extractJsonCandidate(raw).replace(/,\s*([}\]])/g, "$1"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as ParsedLead;
+      return {
+        name: cleanText(parsed.name),
+        phone: cleanText(parsed.phone),
+        email: cleanText(parsed.email),
+        messenger: cleanText(parsed.messenger),
+        note: cleanText(parsed.note),
+        has_contact: Boolean(parsed.has_contact),
+      };
+    } catch {
+      // continue
+    }
+  }
+
+  return null;
+}
+
+function extractPhone(dialog: string) {
+  const match = dialog.match(
+    /(?:\+?\d[\d\s().-]{6,}\d)/g
+  );
+  if (!match?.length) return null;
+
+  for (const item of match) {
+    const digits = item.replace(/\D/g, "");
+    if (digits.length >= 7) return item.trim();
+  }
+
+  return null;
+}
+
+function extractEmail(dialog: string) {
+  const match = dialog.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match?.[0] || null;
+}
+
+function extractMessenger(dialog: string) {
+  const tg = dialog.match(/@([a-zA-Z0-9_]{5,32})/);
+  if (tg) return `Telegram: @${tg[1]}`;
+
+  const wa = dialog.match(/whatsapp[:\s]+([+\d][\d\s().-]{6,}\d)/i);
+  if (wa) return `WhatsApp: ${wa[1].trim()}`;
+
+  const ig = dialog.match(/instagram[:\s]+@?([a-zA-Z0-9._]{2,30})/i);
+  if (ig) return `Instagram: @${ig[1]}`;
+
+  return null;
+}
+
+function getLastUserMessage(
+  messages: Array<{ role: string; content: string | null }>
+) {
+  const lastUser = [...messages].reverse().find((m) => m.role === "user" && m.content);
+  return lastUser?.content?.trim() || null;
+}
+
+function buildDialog(messages: Array<{ role: string; content: string | null }>) {
+  return messages
+    .filter((m) => m.content)
+    .map((m) => `${m.role === "user" ? "Visitor" : "Bot"}: ${m.content}`)
+    .join("\n");
+}
+
+function buildLeadMessage(params: {
+  companyName: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  messenger: string | null;
+  note: string | null;
+}) {
+  const lines = [
+    `🔔 New Lead — ${params.companyName}`,
+    `👤 Name: ${params.name || "-"}`,
+    `📞 Phone: ${params.phone || "-"}`,
+  ];
+
+  if (params.email) lines.push(`✉️ Email: ${params.email}`);
+  if (params.messenger) lines.push(`💬 Messenger: ${params.messenger}`);
+  if (params.note) lines.push(`📝 Note: ${params.note}`);
+
+  return lines.join("\n");
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function markAnalyzed(id: string) {
+  const supabase = getServiceSupabase();
+  await supabase
+    .from("conversations")
+    .update({
+      analyzed: true,
+      analyzed_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+}
+
+async function sendLeadEmail(to: string, subject: string, text: string) {
+  if (!env.RESEND_API_KEY) return;
+
+  const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
       from: "Selvanto <hello@mg.selvanto.com>",
-      to,
-      subject: `New Lead — ${companyName}`,
-      html: `
-        <h2>New Lead</h2>
-        <p><b>Company:</b> ${companyName}</p>
-        ${lead.name ? `<p><b>Name:</b> ${lead.name}</p>` : ""}
-        ${lead.phone ? `<p><b>Phone:</b> ${lead.phone}</p>` : ""}
-        ${lead.email ? `<p><b>Email:</b> ${lead.email}</p>` : ""}
-        ${lead.messenger ? `<p><b>Messenger:</b> ${lead.messenger}</p>` : ""}
-        ${lead.note ? `<p><b>Note:</b> ${lead.note}</p>` : ""}
-      `,
+      to: [to],
+      subject,
+      text,
     }),
   });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Resend failed: ${res.status} ${body}`);
+  }
 }
 
-async function sendTelegramMessage(
-  supabase: ReturnType<typeof getServiceSupabase>,
-  botId: string,
-  chatId: string,
-  text: string
-): Promise<{ ok: boolean; chatId: string }> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const initialChatId = String(chatId);
+async function sendTelegramMessage(chatId: string, text: string) {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
 
-  if (!token) {
-    console.error("[Telegram] TELEGRAM_BOT_TOKEN is missing");
-    return { ok: false, chatId: initialChatId };
-  }
-
-  async function sendOnce(targetChatId: string): Promise<{
-    ok: boolean;
-    raw: string;
-    data: TelegramApiResponse | null;
-  }> {
-    try {
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: targetChatId,
-          text,
-          parse_mode: "HTML",
-        }),
-      });
-
-      const raw = await res.text();
-
-      let data: TelegramApiResponse | null = null;
-      try {
-        data = raw ? JSON.parse(raw) : null;
-      } catch {
-        data = null;
-      }
-
-      return {
-        ok: res.ok && data?.ok === true,
-        raw,
-        data,
-      };
-    } catch (e) {
-      return {
-        ok: false,
-        raw: String(e),
-        data: null,
-      };
+  const res = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+      }),
     }
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram failed: ${res.status} ${body}`);
   }
-
-  const firstTry = await sendOnce(initialChatId);
-
-  if (firstTry.ok) {
-    return { ok: true, chatId: initialChatId };
-  }
-
-  const migratedChatId = firstTry.data?.parameters?.migrate_to_chat_id;
-
-  if (migratedChatId && String(migratedChatId) !== initialChatId) {
-    const newChatId = String(migratedChatId);
-
-    console.warn(
-      `[Telegram] chat migrated for bot ${botId}: ${initialChatId} -> ${newChatId}`
-    );
-
-    const { error: updateError } = await supabase
-      .from("bots")
-      .update({ telegram_chat_id: newChatId })
-      .eq("id", botId)
-      .eq("telegram_chat_id", initialChatId);
-
-    if (updateError) {
-      console.error("[Telegram] failed to save migrated chat id:", updateError);
-      return { ok: false, chatId: initialChatId };
-    }
-
-    const secondTry = await sendOnce(newChatId);
-
-    if (secondTry.ok) {
-      return { ok: true, chatId: newChatId };
-    }
-
-    console.error("[Telegram] retry after migration failed:", secondTry.raw);
-    return { ok: false, chatId: newChatId };
-  }
-
-  console.error("[Telegram] sendMessage failed:", firstTry.raw);
-  return { ok: false, chatId: initialChatId };
 }
 
-export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
-  if (secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function callAnalysisModel(model: string, prompt: string, dialog: string) {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": env.NEXT_PUBLIC_APP_URL,
+      "X-Title": "AI Widget",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_tokens: 500,
+      messages: [
+        {
+          role: "system",
+          content: `${prompt}\n\nImportant: return ONLY valid one-line JSON.`,
+        },
+        {
+          role: "user",
+          content: `Conversation:\n${dialog}`,
+        },
+      ],
+    }),
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`OpenRouter ${res.status}: ${text}`);
+  }
+
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`OpenRouter non-JSON response: ${text}`);
+  }
+
+  const raw = data?.choices?.[0]?.message?.content?.trim();
+
+  if (!raw) {
+    throw new Error(`Empty model reply: ${text}`);
+  }
+
+  return raw;
+}
+
+export async function POST(request: NextRequest) {
+  const secret = request.headers.get("x-cron-secret");
+  if (secret !== env.CRON_SECRET) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const supabase = getServiceSupabase();
-  const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const cutoff = Date.now() - 5 * 60 * 1000;
 
-  const { data: conversationsRaw, error } = await supabase
+  const { data: conversations, error } = await supabase
     .from("conversations")
     .select(
-      "id, session_id, bot_id, bots(company_name, handoff_email, analysis_model, analysis_prompt, enable_analysis, telegram_enabled, telegram_chat_id)"
+      "id, session_id, bot_id, created_at, last_message_at, analyzed, bots(company_name, handoff_email, analysis_model, analysis_prompt, enable_analysis, telegram_enabled, telegram_chat_id)"
     )
     .or("analyzed.eq.false,analyzed.is.null")
-    .or(`last_message_at.lt.${cutoff},last_message_at.is.null`)
-    .limit(10);
+    .order("created_at", { ascending: true })
+    .limit(30);
 
   if (error) {
-    console.error("[Analyze] Query error:", error);
+    console.error("[Analyze] conversations query error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const conversations = conversationsRaw ?? [];
-  console.log(`[Analyze] Found ${conversations.length} conversations to process`);
+  let scanned = 0;
+  let created = 0;
+  let skipped = 0;
+  let failed = 0;
 
-  if (conversations.length === 0) {
-    return NextResponse.json({ processed: 0 });
-  }
+  for (const conv of conversations || []) {
+    scanned += 1;
 
-  let processed = 0;
+    const convId = conv.id as string;
+    const sessionId = conv.session_id as string;
+    const botId = conv.bot_id as string;
+    const lastMessageAt = conv.last_message_at
+      ? new Date(String(conv.last_message_at)).getTime()
+      : 0;
 
-  for (const conv of conversations) {
-    const bot = Array.isArray(conv.bots) ? conv.bots[0] ?? null : (conv.bots as any);
-
-    if (!bot || bot.enable_analysis === false) {
-      await supabase
-        .from("conversations")
-        .update({ analyzed: true, analyzed_at: new Date().toISOString() })
-        .eq("id", conv.id);
-
-      console.log(`[Analyze] conv ${conv.id}: analysis disabled, skipping`);
+    if (lastMessageAt && lastMessageAt > cutoff) {
       continue;
     }
 
-    const { data: messages } = await supabase
+    const bot = Array.isArray(conv.bots)
+      ? (conv.bots[0] as BotRelation extends any[] ? never : any)
+      : (conv.bots as BotRelation);
+
+    if (!bot) {
+      console.warn(`[Analyze] conv ${convId}: bot relation missing`);
+      await markAnalyzed(convId);
+      skipped += 1;
+      continue;
+    }
+
+    if (bot.enable_analysis === false) {
+      await markAnalyzed(convId);
+      skipped += 1;
+      continue;
+    }
+
+    const { data: existingLead } = await supabase
+      .from("leads")
+      .select("id")
+      .eq("bot_id", botId)
+      .eq("session_id", sessionId)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingLead) {
+      await markAnalyzed(convId);
+      skipped += 1;
+      continue;
+    }
+
+    const { data: messages, error: messagesError } = await supabase
       .from("messages")
       .select("role, content")
-      .eq("conversation_id", conv.id)
+      .eq("conversation_id", convId)
       .order("created_at", { ascending: true });
 
-    if (!messages || messages.length < 2) {
-      await supabase
-        .from("conversations")
-        .update({ analyzed: true, analyzed_at: new Date().toISOString() })
-        .eq("id", conv.id);
-
-      console.log(`[Analyze] conv ${conv.id}: too short (${messages?.length ?? 0} msgs), skipping`);
+    if (messagesError) {
+      console.error(`[Analyze] conv ${convId}: messages query error`, messagesError);
+      failed += 1;
       continue;
     }
 
-    const dialog = messages
-      .map((m) => `${m.role === "user" ? "Client" : "Bot"}: ${m.content}`)
-      .join("\n");
+    if (!messages?.length) {
+      console.warn(`[Analyze] conv ${convId}: no messages`);
+      await markAnalyzed(convId);
+      skipped += 1;
+      continue;
+    }
 
-    const analysisPrompt = bot.analysis_prompt || DEFAULT_ANALYSIS_PROMPT;
-    const systemPrompt = `${analysisPrompt}\n\nReturn ONLY valid JSON, no markdown, no explanation.`;
-    const userContent = `Analyze this dialog:\n\n${dialog}`;
+    const dialog = buildDialog(messages as Array<{ role: string; content: string | null }>);
+    const fallbackPhone = extractPhone(dialog);
+    const fallbackEmail = extractEmail(dialog);
+    const fallbackMessenger = extractMessenger(dialog);
+    const fallbackNote = getLastUserMessage(messages as Array<{ role: string; content: string | null }>);
 
-    const configuredModels = ((bot.analysis_model as string) || "")
-      .split(",")
-      .map((m: string) => m.trim())
-      .filter(Boolean);
+    const models = splitModels(bot.analysis_model).length
+      ? splitModels(bot.analysis_model)
+      : ["openai/gpt-4o-mini"];
 
-    const models = configuredModels.length > 0 ? configuredModels : DEFAULT_ANALYSIS_MODELS;
+    const prompt = (bot.analysis_prompt || DEFAULT_ANALYSIS_PROMPT).trim();
 
-    let raw = "";
-    let success = false;
+    let parsed: ParsedLead | null = null;
+    let usedModel: string | null = null;
 
-    for (let i = 0; i < models.length; i++) {
-      const model = models[i];
-      const attempts = i === 0 ? 2 : 1;
+    for (const model of models) {
+      let success = false;
 
-      for (let attempt = 1; attempt <= attempts; attempt++) {
-        if (attempt > 1) {
-          console.log(`[Analyze] conv ${conv.id}: retrying model ${model}...`);
-          await new Promise((r) => setTimeout(r, 2000));
-        }
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const raw = await callAnalysisModel(model, prompt, dialog);
+          const parsedRaw = tryParseLead(raw);
 
-        console.log(`[Analyze] conv ${conv.id}: trying model ${model} (attempt ${attempt})`);
-        const result = await callLLM(model, systemPrompt, userContent);
+          if (!parsedRaw) {
+            console.warn(
+              `[Analyze] conv ${convId}: JSON parse failed on ${model} attempt ${attempt}, raw was: ${raw}`
+            );
+            if (attempt < 2) {
+              await sleep(1500);
+              continue;
+            }
+            break;
+          }
 
-        if (result.ok && result.raw) {
-          raw = result.raw;
+          parsed = parsedRaw;
+          usedModel = model;
           success = true;
-          console.log(`[Analyze] conv ${conv.id}: model ${model} succeeded`);
           break;
+        } catch (err) {
+          console.warn(
+            `[Analyze] conv ${convId}: model ${model} attempt ${attempt} failed:`,
+            err
+          );
+          if (attempt < 2) {
+            await sleep(1500);
+          }
         }
       }
 
       if (success) break;
-      console.warn(`[Analyze] conv ${conv.id}: model ${model} failed, trying next...`);
     }
 
-    if (!success) {
-      console.error(`[Analyze] conv ${conv.id}: all models failed, will retry next cron`);
+    if (!parsed) {
+      console.error(
+        `[Analyze] conv ${convId}: all analysis models failed, leaving analyzed=false for retry`
+      );
+      failed += 1;
       continue;
     }
 
-    console.log(`[Analyze] conv ${conv.id}: LLM raw response:`, raw);
+    const name = cleanText(parsed.name);
+    const phone = cleanText(parsed.phone) || fallbackPhone;
+    const email = cleanText(parsed.email) || fallbackEmail;
+    const messenger = cleanText(parsed.messenger) || fallbackMessenger;
 
-    let parsed: any;
-    try {
-      const clean = raw.replace(/```json|```/g, "").trim();
-      parsed = JSON.parse(clean);
-    } catch (e) {
-      console.error(`[Analyze] conv ${conv.id}: JSON parse failed, raw was:`, raw);
-      await supabase
-        .from("conversations")
-        .update({ analyzed: true, analyzed_at: new Date().toISOString() })
-        .eq("id", conv.id);
+    let note = cleanText(parsed.note) || fallbackNote;
+    if (messenger && note && !note.includes(messenger)) {
+      note = `${note} | ${messenger}`;
+    } else if (messenger && !note) {
+      note = messenger;
+    }
+
+    const hasRealContact = Boolean(phone || email || messenger);
+
+    if (!hasRealContact) {
+      console.log(
+        `[Analyze] conv ${convId}: parsed successfully with ${usedModel}, but no real contact found`
+      );
+      await markAnalyzed(convId);
+      skipped += 1;
       continue;
     }
 
-    console.log(`[Analyze] conv ${conv.id}: parsed=`, parsed);
-
-    await supabase
-      .from("conversations")
-      .update({ analyzed: true, analyzed_at: new Date().toISOString() })
-      .eq("id", conv.id);
-
-    const hasContact =
-      parsed.has_contact === true ||
-      !!parsed.phone ||
-      !!parsed.name ||
-      !!parsed.email ||
-      !!parsed.messenger;
-
-    if (!hasContact) {
-      console.log(`[Analyze] conv ${conv.id}: no contact info, lead not created`);
-      continue;
-    }
-
-    const { error: leadError } = await supabase.from("leads").insert({
-      bot_id: conv.bot_id,
-      session_id: conv.session_id,
-      name: parsed.name || null,
-      phone: parsed.phone || null,
-      email: parsed.email || null,
-      note: (parsed.messenger ? `Messenger: ${parsed.messenger}\n` : "") + (parsed.note || parsed.summary || ""),
+    const { error: insertError } = await supabase.from("leads").insert({
+      bot_id: botId,
+      session_id: sessionId,
+      name,
+      phone,
+      email,
+      note,
       status: "new",
     });
 
-    if (leadError) {
-      console.error(`[Analyze] conv ${conv.id}: lead insert error:`, leadError);
-    } else {
-      console.log(`[Analyze] conv ${conv.id}: lead created ✓`);
+    if (insertError) {
+      console.error(`[Analyze] conv ${convId}: lead insert error`, insertError);
+      failed += 1;
+      continue;
     }
+
+    const notificationText = buildLeadMessage({
+      companyName: bot.company_name || "Clinic",
+      name,
+      phone,
+      email,
+      messenger,
+      note,
+    });
 
     if (bot.handoff_email) {
-      await sendLeadEmail(bot.handoff_email, bot.company_name, {
-        name: parsed.name,
-        phone: parsed.phone,
-        email: parsed.email,
-        messenger: parsed.messenger,
-        note: parsed.note || parsed.summary,
-      });
-
-      console.log(`[Analyze] conv ${conv.id}: email sent to ${bot.handoff_email}`);
-    }
-
-    if (bot.telegram_enabled && bot.telegram_chat_id) {
-      const msg = [
-        `🔔 <b>New Lead — ${bot.company_name}</b>`,
-        ``,
-        parsed.name ? `👤 <b>Name:</b> ${parsed.name}` : null,
-        parsed.phone ? `📞 <b>Phone:</b> ${parsed.phone}` : null,
-        parsed.email ? `📧 <b>Email:</b> ${parsed.email}` : null,
-        parsed.messenger ? `💬 <b>Messenger:</b> ${parsed.messenger}` : null,
-        parsed.note ? `📝 <b>Note:</b> ${parsed.note}` : null,
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      const telegramResult = await sendTelegramMessage(
-        supabase,
-        conv.bot_id,
-        String(bot.telegram_chat_id),
-        msg
-      );
-
-      if (telegramResult.ok) {
-        console.log(`[Analyze] conv ${conv.id}: telegram sent to ${telegramResult.chatId}`);
+      try {
+        await sendLeadEmail(
+          bot.handoff_email,
+          `New Lead — ${bot.company_name || "Clinic"}`,
+          notificationText
+        );
+      } catch (err) {
+        console.error(`[Analyze] conv ${convId}: email send error`, err);
       }
     }
 
-    processed++;
+    if (bot.telegram_enabled && bot.telegram_chat_id) {
+      try {
+        await sendTelegramMessage(bot.telegram_chat_id, notificationText);
+      } catch (err) {
+        console.error(`[Analyze] conv ${convId}: telegram send error`, err);
+      }
+    }
+
+    await markAnalyzed(convId);
+    created += 1;
+
+    console.log(
+      `[Analyze] conv ${convId}: lead created successfully with ${usedModel}`
+    );
   }
 
-  console.log(`[Analyze] Done. processed=${processed}`);
-  return NextResponse.json({ processed });
+  return NextResponse.json({
+    ok: true,
+    scanned,
+    created,
+    skipped,
+    failed,
+  });
 }

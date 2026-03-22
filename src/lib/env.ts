@@ -1,4 +1,9 @@
-const requiredServer = ["SUPABASE_SERVICE_ROLE_KEY", "OPENROUTER_API_KEY", "ADMIN_SECRET"] as const;
+const requiredServer = [
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "OPENROUTER_API_KEY",
+  "ADMIN_SECRET",
+  "CRON_SECRET"
+] as const;
 
 function read(name: string, isPublic = false): string {
   const value = process.env[name];
@@ -17,6 +22,9 @@ export const env = {
   SUPABASE_SERVICE_ROLE_KEY: read("SUPABASE_SERVICE_ROLE_KEY"),
   OPENROUTER_API_KEY: read("OPENROUTER_API_KEY"),
   ADMIN_SECRET: read("ADMIN_SECRET"),
+  CRON_SECRET: read("CRON_SECRET"),
+  RESEND_API_KEY: process.env.RESEND_API_KEY || "",
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || "",
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
 };
 
